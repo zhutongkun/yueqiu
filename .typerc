@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当期版本
-export VERSION="V1.0.0 2023-11-29"
+export VERSION="|V1.0.2| |2025-08-15|"
 
 # 雷达类型：S2L
 export LIDAR_TYPE=S2L
@@ -9,12 +9,12 @@ export LIDAR_TYPE=S2L
 # 深度摄像头类型：Gemini&AstraProPlus
 export DEPTH_CAMERA_TYPE="Gemini&AstraProPlus"
 
-# 机器类型：ROSLander_Mecanum/ROSLander_Tank/ROSLander_Acker
-export MACHINE_TYPE=ROSLander_Mecanum
+# 机器类型：ROSLanderMecanum/ROSLanderOmni
+export MACHINE_TYPE=ROSLanderMecanum
 
 # 主从机设置：robot_xxx
-export HOST=robot_1
-export MASTER=robot_1
+export ROBOT_HOST=robot_1
+export ROBOT_MASTER=robot_1
 
 # 语言设置，主要涉及语音部分：Chinese/English
 export ASR_LANGUAGE=Chinese
@@ -22,6 +22,6 @@ export ASR_LANGUAGE=Chinese
 echo -e "LIDAR:   \033[32m$LIDAR_TYPE\033[0m"
 echo -e "CAMERA:  \033[32m$DEPTH_CAMERA_TYPE\033[0m"
 echo -e "MACHINE: \033[32m$MACHINE_TYPE\033[0m"
-echo -e "HOST:    \033[32m$HOST\033[0m"
-echo -e "MASTER:  \033[32m$MASTER\033[0m"
+echo -e "HOST:    \033[32m$ROBOT_HOST\033[0m"
+echo -e "MASTER:  \033[32m$ROBOT_MASTER\033[0m"
 echo -e "VERSION: \033[32m$VERSION\033[0m"

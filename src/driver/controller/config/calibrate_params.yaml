@@ -1,0 +1,6 @@
+mecanum:
+- linear_correction_factor: 1.0
+- angular_correction_factor: 1.01
+omni:
+- linear_correction_factor: 1.0
+- angular_correction_factor: 1.03

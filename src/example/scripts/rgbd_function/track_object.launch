@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+    <!--底盘驱动(chassis driver)-->
+    <include file="$(find controller)/launch/controller.launch"/>
+    <include file="$(find peripherals)/launch/depth_cam.launch">
+        <arg name="depth_camera_type"                 value="Gemini"/>
+    </include>
+    <node pkg="example" type="track_object_node.py" name="track_object" output="screen"/>
+</launch>

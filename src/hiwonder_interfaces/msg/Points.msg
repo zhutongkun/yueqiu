@@ -1,1 +1,0 @@
-hiwonder_interfaces/PixelPosition[] points

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<launch>
+    <include file="$(find peripherals)/launch/depth_cam.launch"/>
+    <arg name="use_astra_camera" default="true" />
+    <arg name="node_name" default="yolov8" />
+    <rosparam param="/$(arg node_name)/classes">['red_fruit','green_fruit','red_tag','green_tag']</rosparam>
+
+    <node pkg="agripicking" type="yolov8_node.py" name="$(arg node_name)" output="screen">
+        <param name="engine"        value="best_agripicking.engine"/>
+        <param name="lib"           value="libmyplugins.so"/>
+        <param name="conf_thresh"   value="0.75"/>
+        <param name="use_astra_camera"   value="$(arg use_astra_camera)"/>
+    </node>
+
+</launch>

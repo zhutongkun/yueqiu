@@ -47,4 +47,4 @@ add_dependencies(
   ${xf_mic_package_EXPORTED_TARGETS}
   xf_mic_asr_offline_gencpp
 )
-target_link_libraries(voice_control ${catkin_LIBRARIES} offline_record_lib rt dl pthread stdc++ )
+target_link_libraries(voice_control ${catkin_LIBRARIES} offline_record_lib hid_lib rt dl pthread stdc++ )

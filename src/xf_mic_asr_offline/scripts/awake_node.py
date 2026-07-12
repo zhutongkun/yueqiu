@@ -69,13 +69,13 @@ class CircleMic:
         return False
 
     # 唤醒词更换（浅定制）
-    def set_wakeup_word(self, str_pinyin="xiao3 huan4 xiao3 huan4"):
+    def set_wakeup_word(self, str_pinyin="xiao3 qi2 xiao3 qi2"):
         # 参数为中文拼音
         # 更多参数请参考https://aiui.xfyun.cn/doc/aiui/3_access_service/access_hardware/r818/protocol.html
         param ={
             "type": "wakeup_keywords",
             "content": {
-                "keyword": "xiao3 huan4 xiao3 huan4",
+                "keyword": "xiao3 qi2 xiao3 qi2",
                 "threshold": "500" 
             }
         }
@@ -163,6 +163,7 @@ class CircleMic:
             if recv_data == b'\x01':
                 recv_data = self.serialHandle.read()
                 if recv_data == b'\x04':
+                    time.sleep(0.01)
                     recv_data = self.serialHandle.read(4)
                     result = self.serialHandle.read((recv_data[1] << 8 | recv_data[0]) + 1)
                     if b'content' in result:
@@ -175,9 +176,6 @@ class CircleMic:
                                     msg = Bool()
                                     msg.data = True
                                     self.flag_pub.publish(msg)
-                                    angle = self.val_map(angle, 0, 360, 360, 0) + 240  # 和圆形兼容
-                                    if angle >= 360:
-                                        angle -= 360
                                     msg = Int32()
                                     msg.data = int(angle)
                                     self.angle_pub.publish(msg)
@@ -191,7 +189,7 @@ class AwakeNode:
 
         mic_type = rospy.get_param('~mic_type', 'mic6_circle')
         port = rospy.get_param('~port', '/dev/ring_mic')
-        awake_word = rospy.get_param('~awake_word', 'xiao3 huan4 xiao3 huan4')
+        awake_word = rospy.get_param('~awake_word', 'xiao3 mai4 xiao3 mai4')
         enable_setting = rospy.get_param('~enable_setting', False)
         self.awake_angle_pub = rospy.Publisher('~angle', Int32, queue_size=1)
         self.awake_flag_pub = rospy.Publisher('~awake_flag', Bool, queue_size=1) 

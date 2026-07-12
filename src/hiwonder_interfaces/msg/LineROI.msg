@@ -1,3 +1,0 @@
-hiwonder_interfaces/ROI roi_up
-hiwonder_interfaces/ROI roi_center
-hiwonder_interfaces/ROI roi_down

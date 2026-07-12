@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<launch>
+    <include file="$(find peripherals)/launch/depth_cam.launch"/>
+    <include file="$(find controller)/launch/controller.launch"/>
+    <include file="$(find kinematics)/launch/kinematics_node.launch"/>
+
+</launch>

@@ -23,7 +23,7 @@ setopt HIST_IGNORE_ALL_DUPS
 source $ZSH/plugins/powerlevel10k/powerlevel10k.zsh-theme
 source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 source $ZSH/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
-source $HOME/ros_ws/.hiwonderrc 
+source $HOME/ros_ws/.robotrrc 
 
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh

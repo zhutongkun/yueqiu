@@ -27,7 +27,7 @@ class VoiceControlNavNode:
         self.language = os.environ['ASR_LANGUAGE']
         self.costmap = rospy.get_param('~costmap', '/move_base/local_costmap/costmap') 
         self.map_frame = rospy.get_param('~map_frame', 'map')
-        self.mecanum_pub = rospy.Publisher('hiwonder_controller/cmd_vel', Twist, queue_size=1)
+        self.mecanum_pub = rospy.Publisher('controller/cmd_vel', Twist, queue_size=1)
         self.goal_pub = rospy.Publisher('move_base_simple/goal', PoseStamped, queue_size=1)
         self.goal_status_pub = rospy.Publisher('move_base/result', MoveBaseActionResult, queue_size=1)
         rospy.Subscriber('/asr_node/voice_words', String, self.words_callback)
@@ -39,7 +39,7 @@ class VoiceControlNavNode:
         self.mecanum_pub.publish(Twist())
         signal.signal(signal.SIGINT, self.shutdown)
 
-        rospy.loginfo('唤醒口令: 小幻小幻(Wake up word: hello hiwonder)')
+        rospy.loginfo('唤醒口令: 小迈小迈(Wake up word: hello robot)')
         rospy.loginfo('唤醒后15秒内可以不用再唤醒(No need to wake up within 15 seconds after waking up)')
         rospy.loginfo('控制指令: 去A点 去B点 去C点 回原点(Voice command: go to A/B/C point go back to the start')
 
@@ -66,7 +66,7 @@ class VoiceControlNavNode:
             self.play('awake')
         elif self.words == '休眠(Sleep)':
             msg = BuzzerState()
-            msg.freq = 2000
+            msg.freq = 1900
             msg.on_time = 0.05
             msg.off_time = 0.01
             msg.repeat = 1

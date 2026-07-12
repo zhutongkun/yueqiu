@@ -1,0 +1,79 @@
+[03/12 15:46:03.980012][debug][197899][Context.cpp:29] Context creating. work_dir=/home/ubuntu/ros_ws/src/example/scripts/color_detect
+[03/12 15:46:03.980206][debug][197899][Context.cpp:48] Config file version=1.1
+[03/12 15:46:03.980244][debug][197899][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[03/12 15:46:03.980258][info][197899][Context.cpp:67] Context created with config: default config!
+[03/12 15:46:03.980309][info][197899][Context.cpp:72] Context work_dir=/home/ubuntu/ros_ws/src/example/scripts/color_detect
+[03/12 15:46:03.980333][debug][197899][DeviceManager.cpp:30] DeviceManager init ...
+[03/12 15:46:03.980339][debug][197899][LinuxPal.cpp:38] createObPal: create LinuxPal!
+[03/12 15:46:03.982471][debug][197899][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[03/12 15:46:04.156276][debug][197899][EnumeratorLibusb.cpp:323] queryDevicesInfo done!
+[03/12 15:46:04.156602][debug][197899][ObV4lDevice.cpp:346] Found video4linux: video3
+[03/12 15:46:04.157791][debug][197899][ObV4lDevice.cpp:346] Found video4linux: video1
+[03/12 15:46:04.158484][debug][197899][ObV4lDevice.cpp:346] Found video4linux: video2
+[03/12 15:46:04.159382][debug][197899][ObV4lDevice.cpp:346] Found video4linux: video0
+[03/12 15:46:04.160312][debug][197899][UsbDeviceEnumerator.cpp:161] Current usb device port list:
+[03/12 15:46:04.160337][debug][197899][UsbDeviceEnumerator.cpp:164]  - 1-2.2.1-8.0 | Orbbec(R) Astra(TM) 3D Camera(F) Depth
+[03/12 15:46:04.160346][debug][197899][UsbDeviceEnumerator.cpp:164]  - 1-2.2.1-8.1 | Orbbec(R) Astra(TM) Audio Devive
+[03/12 15:46:04.160353][debug][197899][UsbDeviceEnumerator.cpp:164]  - 1-2.1.4.1-91.0 | USB Camera
+[03/12 15:46:04.160359][debug][197899][UsbDeviceEnumerator.cpp:164]  - 1-2.2.2-10.0 | USB Camera
+[03/12 15:46:04.160366][debug][197899][UsbDeviceEnumerator.cpp:164]  - 1-2.1.4.2-93.0 | 
+[03/12 15:46:04.160471][warning][197899][OpenNIDeviceInfo.cpp:186] New openni device matched.
+[03/12 15:46:04.160555][warning][197899][OpenNIDeviceInfo.cpp:186] New openni device matched.
+[03/12 15:46:04.161146][info][197899][LinuxPal.cpp:112] Create PollingDeviceWatcher!
+[03/12 15:46:04.161211][debug][197899][UsbDeviceEnumerator.cpp:69] Found 2 device(s):
+[03/12 15:46:04.161225][debug][197899][UsbDeviceEnumerator.cpp:72]   - Name: Astra Pro Plus, PID: 0x060F, SN/ID: , connection: USB2.0
+[03/12 15:46:04.161230][debug][197899][UsbDeviceEnumerator.cpp:72]   - Name: SV1301S_U3, PID: 0x0614, SN/ID: , connection: USB2.0
+[03/12 15:46:04.161248][info][197899][DeviceManager.cpp:15] Current found device(s): (2)
+[03/12 15:46:04.161266][info][197899][DeviceManager.cpp:24] 	- Name: Astra Pro Plus, PID: 0x060f, SN/ID: , Connection: USB2.0
+[03/12 15:46:04.161281][info][197899][DeviceManager.cpp:24] 	- Name: SV1301S_U3, PID: 0x0614, SN/ID: , Connection: USB2.0
+[03/12 15:46:04.161296][debug][197899][DeviceManager.cpp:55] DeviceManager construct done!
+[03/12 15:46:42.799896][debug][198251][Context.cpp:29] Context creating. work_dir=/home/ubuntu/ros_ws/src/example/scripts/color_detect
+[03/12 15:46:42.800109][debug][198251][Context.cpp:48] Config file version=1.1
+[03/12 15:46:42.800153][debug][198251][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[03/12 15:46:42.800168][info][198251][Context.cpp:67] Context created with config: default config!
+[03/12 15:46:42.800216][info][198251][Context.cpp:72] Context work_dir=/home/ubuntu/ros_ws/src/example/scripts/color_detect
+[03/12 15:46:42.800249][debug][198251][DeviceManager.cpp:30] DeviceManager init ...
+[03/12 15:46:42.800256][debug][198251][LinuxPal.cpp:38] createObPal: create LinuxPal!
+[03/12 15:46:42.802157][debug][198251][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[03/12 15:46:42.822112][debug][198251][EnumeratorLibusb.cpp:323] queryDevicesInfo done!
+[03/12 15:46:42.822373][debug][198251][ObV4lDevice.cpp:346] Found video4linux: video3
+[03/12 15:46:42.823369][debug][198251][ObV4lDevice.cpp:346] Found video4linux: video2
+[03/12 15:46:42.823972][debug][198251][UsbDeviceEnumerator.cpp:161] Current usb device port list:
+[03/12 15:46:42.824040][debug][198251][UsbDeviceEnumerator.cpp:164]  - 1-2.1.4.1-91.0 | USB Camera
+[03/12 15:46:42.824045][debug][198251][UsbDeviceEnumerator.cpp:164]  - 1-2.1.4.2-93.0 | 
+[03/12 15:46:42.824106][warning][198251][OpenNIDeviceInfo.cpp:186] New openni device matched.
+[03/12 15:46:42.824320][info][198251][LinuxPal.cpp:112] Create PollingDeviceWatcher!
+[03/12 15:46:42.824348][debug][198251][UsbDeviceEnumerator.cpp:69] Found 1 device(s):
+[03/12 15:46:42.824360][debug][198251][UsbDeviceEnumerator.cpp:72]   - Name: SV1301S_U3, PID: 0x0614, SN/ID: , connection: USB2.0
+[03/12 15:46:42.824378][info][198251][DeviceManager.cpp:15] Current found device(s): (1)
+[03/12 15:46:42.824391][info][198251][DeviceManager.cpp:24] 	- Name: SV1301S_U3, PID: 0x0614, SN/ID: , Connection: USB2.0
+[03/12 15:46:42.824402][debug][198251][DeviceManager.cpp:55] DeviceManager construct done!
+[03/12 15:46:59.213203][debug][198434][Context.cpp:29] Context creating. work_dir=/home/ubuntu/ros_ws/src/example/scripts/color_detect
+[03/12 15:46:59.213397][debug][198434][Context.cpp:48] Config file version=1.1
+[03/12 15:46:59.213445][debug][198434][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[03/12 15:46:59.213470][info][198434][Context.cpp:67] Context created with config: default config!
+[03/12 15:46:59.213533][info][198434][Context.cpp:72] Context work_dir=/home/ubuntu/ros_ws/src/example/scripts/color_detect
+[03/12 15:46:59.213575][debug][198434][DeviceManager.cpp:30] DeviceManager init ...
+[03/12 15:46:59.213585][debug][198434][LinuxPal.cpp:38] createObPal: create LinuxPal!
+[03/12 15:46:59.216550][debug][198434][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[03/12 15:46:59.389453][debug][198434][EnumeratorLibusb.cpp:323] queryDevicesInfo done!
+[03/12 15:46:59.389630][debug][198434][ObV4lDevice.cpp:346] Found video4linux: video3
+[03/12 15:46:59.390609][debug][198434][ObV4lDevice.cpp:346] Found video4linux: video1
+[03/12 15:46:59.391283][debug][198434][ObV4lDevice.cpp:346] Found video4linux: video2
+[03/12 15:46:59.392109][debug][198434][ObV4lDevice.cpp:346] Found video4linux: video0
+[03/12 15:46:59.392910][debug][198434][UsbDeviceEnumerator.cpp:161] Current usb device port list:
+[03/12 15:46:59.392933][debug][198434][UsbDeviceEnumerator.cpp:164]  - 1-2.2.1-97.0 | Orbbec(R) Astra(TM) 3D Camera(F) Depth
+[03/12 15:46:59.392944][debug][198434][UsbDeviceEnumerator.cpp:164]  - 1-2.2.1-97.1 | Orbbec(R) Astra(TM) Audio Devive
+[03/12 15:46:59.392951][debug][198434][UsbDeviceEnumerator.cpp:164]  - 1-2.1.4.1-91.0 | USB Camera
+[03/12 15:46:59.392959][debug][198434][UsbDeviceEnumerator.cpp:164]  - 1-2.2.2-96.0 | USB Camera
+[03/12 15:46:59.392965][debug][198434][UsbDeviceEnumerator.cpp:164]  - 1-2.1.4.2-93.0 | 
+[03/12 15:46:59.393019][warning][198434][OpenNIDeviceInfo.cpp:186] New openni device matched.
+[03/12 15:46:59.393065][warning][198434][OpenNIDeviceInfo.cpp:186] New openni device matched.
+[03/12 15:46:59.393321][info][198434][LinuxPal.cpp:112] Create PollingDeviceWatcher!
+[03/12 15:46:59.393361][debug][198434][UsbDeviceEnumerator.cpp:69] Found 2 device(s):
+[03/12 15:46:59.393376][debug][198434][UsbDeviceEnumerator.cpp:72]   - Name: Astra Pro Plus, PID: 0x060F, SN/ID: , connection: USB2.0
+[03/12 15:46:59.393385][debug][198434][UsbDeviceEnumerator.cpp:72]   - Name: SV1301S_U3, PID: 0x0614, SN/ID: , connection: USB2.0
+[03/12 15:46:59.393402][info][198434][DeviceManager.cpp:15] Current found device(s): (2)
+[03/12 15:46:59.393426][info][198434][DeviceManager.cpp:24] 	- Name: Astra Pro Plus, PID: 0x060f, SN/ID: , Connection: USB2.0
+[03/12 15:46:59.393446][info][198434][DeviceManager.cpp:24] 	- Name: SV1301S_U3, PID: 0x0614, SN/ID: , Connection: USB2.0
+[03/12 15:46:59.393464][debug][198434][DeviceManager.cpp:55] DeviceManager construct done!

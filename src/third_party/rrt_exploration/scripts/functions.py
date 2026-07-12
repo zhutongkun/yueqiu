@@ -93,16 +93,14 @@ def index_of_point(mapData, Xp):
     Xstarty = mapData.info.origin.position.y
     width = mapData.info.width
     Data = mapData.data
-    index = int(	(floor((Xp[1]-Xstarty)/resolution) *
+    index = int((floor((Xp[1]-Xstarty)/resolution) *
                   width)+(floor((Xp[0]-Xstartx)/resolution)))
     return index
 
 
 def point_of_index(mapData, i):
-    y = mapData.info.origin.position.y + \
-        (i/mapData.info.width)*mapData.info.resolution
-    x = mapData.info.origin.position.x + \
-        (i-(i/mapData.info.width)*(mapData.info.width))*mapData.info.resolution
+    y = mapData.info.origin.position.y + int(i/mapData.info.width)*mapData.info.resolution
+    x = mapData.info.origin.position.x + (i-int(i/mapData.info.width)*(mapData.info.width))*mapData.info.resolution
     return array([x, y])
 # ________________________________________________________________________________
 
@@ -115,10 +113,10 @@ def informationGain(mapData, point, r):
     for n in range(0, 2*r_region+1):
         start = n*mapData.info.width+init_index
         end = start+2*r_region
-        limit = ((start/mapData.info.width)+2)*mapData.info.width
+        limit = ((int(start/mapData.info.width))+2)*mapData.info.width
         for i in range(start, end+1):
             if (i >= 0 and i < limit and i < len(mapData.data)):
-                if(mapData.data[i] == -1 and norm(array(point)-point_of_index(mapData, i)) <= r):
+                if(mapData.data[i] == -1 and norm(array(point) - point_of_index(mapData, i)) <= r):
                     infoGain += 1
     return infoGain*(mapData.info.resolution**2)
 # ________________________________________________________________________________
@@ -131,7 +129,7 @@ def discount(mapData, assigned_pt, centroids, infoGain, r):
     for n in range(0, 2*r_region+1):
         start = n*mapData.info.width+init_index
         end = start+2*r_region
-        limit = ((start/mapData.info.width)+2)*mapData.info.width
+        limit = ((int(start/mapData.info.width))+2)*mapData.info.width
         for i in range(start, end+1):
             if (i >= 0 and i < limit and i < len(mapData.data)):
                 for j in range(0, len(centroids)):
@@ -161,7 +159,7 @@ def unvalid(mapData, pt):
     for n in range(0, 2*r_region+1):
         start = n*mapData.info.width+init_index
         end = start+2*r_region
-        limit = ((start/mapData.info.width)+2)*mapData.info.width
+        limit = (int(start/mapData.info.width)+2)*mapData.info.width
         for i in range(start, end+1):
             if (i >= 0 and i < limit and i < len(mapData.data)):
                 if(mapData.data[i] == 1):

@@ -9,8 +9,8 @@ import math
 import rospy
 import signal
 import numpy as np
-import hiwonder_sdk.pid as pid
-import hiwonder_sdk.misc as misc
+import sdk.pid as pid
+import sdk.misc as misc
 import sensor_msgs.msg as sensor_msg
 from geometry_msgs.msg import Twist
 from std_msgs.msg import String, Int32
@@ -43,19 +43,21 @@ class VoiceControlNode:
 
         self.language = os.environ['ASR_LANGUAGE']
         self.lidar_type = os.environ.get('LIDAR_TYPE')
-        self.mecanum_pub = rospy.Publisher('/hiwonder_controller/cmd_vel', Twist, queue_size=1)
+        rospy.sleep(rospy.get_param('~delay', 0))
+        print("等待麦克风启动")
+        rospy.wait_for_service('/voice_control/get_offline_result')
+        self.mecanum_pub = rospy.Publisher('/controller/cmd_vel', Twist, queue_size=1)
         self.lidar_sub = rospy.Subscriber('/scan', sensor_msg.LaserScan, self.lidar_callback)
         rospy.Subscriber('/asr_node/voice_words', String, self.words_callback)
         rospy.Subscriber('/awake_node/angle', Int32, self.angle_callback)
-        rospy.wait_for_service('/voice_control/get_offline_result')
+        print("硬件启动完毕")
         self.play('running')
         self.mecanum_pub.publish(Twist())
         signal.signal(signal.SIGINT, self.shutdown)
         self.buzzer_pub = rospy.Publisher('/ros_robot_controller/set_buzzer', BuzzerState, queue_size=1)
-        rospy.loginfo('唤醒口令: 小幻小幻(Wake up word: hello hiwonder)')
+        rospy.loginfo('唤醒口令: 小迈小迈(Wake up word: hello robot)')
         rospy.loginfo('唤醒后15秒内可以不用再唤醒(No need to wake up within 15 seconds after waking up)')
-        rospy.loginfo(
-            '控制指令: 左转 右转 前进 后退 过来(Voice command: turn left/turn right/go forward/go backward/come here)')
+        rospy.loginfo('控制指令: 左转 右转 前进 后退 过来(Voice command: turn left/turn right/go forward/go backward/come here)')
 
         self.time_stamp = rospy.get_time()
         self.current_time_stamp = rospy.get_time()
@@ -158,17 +160,16 @@ class VoiceControlNode:
                     twist.angular.z = -0.8
                 elif self.words == '过来' or self.words == 'come here':
                     self.play('come')
-                    if 270 > self.angle > 90:
-                        twist.angular.z = -1
-                        self.time_stamp = rospy.get_time() + math.radians(self.angle - 90)
-                    else:
+                    if 330 > self.angle > 150:
                         twist.angular.z = 1
-                        if self.angle <= 90:
-                            self.angle = 90 - self.angle
+                        self.angle = self.angle - 150
+                    else:
+                        twist.angular.z = -1
+                        if self.angle <= 150:
+                            self.angle = 150 - self.angle
                         else:
-                            self.angle = 450 - self.angle
-                        self.time_stamp = rospy.get_time() + math.radians(self.angle)
-                    print(self.angle)
+                            self.angle = 150 + 360 - self.angle
+                    self.time_stamp = rospy.get_time() + math.radians(self.angle)
                     self.lidar_follow = True
                 elif self.words == '休眠(Sleep)':
                     rospy.sleep(0.01)

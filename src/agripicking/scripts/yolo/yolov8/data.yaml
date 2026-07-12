@@ -1,0 +1,6 @@
+train: /home/ubuntu/ros_ws/src/agripicking/scripts/yolo/yolov8/dataset/images/train  # 训练集路径
+val: /home/ubuntu/ros_ws/src/agripicking/scripts/yolo/yolov8/dataset/images/val      # 验证集路径
+
+nc: 4  # 类别数（根据你的数据修改）
+names: ["red_fruit", "green_fruit", "red_tag","green_tag"]  # 类别名称（根据你的数据修改）
+

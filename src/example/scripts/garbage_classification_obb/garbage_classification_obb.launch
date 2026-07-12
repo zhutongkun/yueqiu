@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<launch>
+
+    <!--底盘驱动(chassis driver)-->
+    <include file="$(find controller)/launch/controller.launch"/>
+
+    <include file="$(find kinematics)/launch/kinematics_node.launch"/>
+
+    <!-- 启动深度相机 -->
+    <include file="$(find peripherals)/launch/depth_cam.launch"/>
+
+    <!-- Launch YOLOv8 识别节点 -->
+    <node name="yolov8_node" pkg="example" type="yolov8_node.py" output="screen">
+    </node>
+
+    <!-- Launch 机械臂控制节点 -->
+    <node name="arm_control_node" pkg="example" type="arm_control_node.py" output="screen">
+    </node>
+
+</launch>

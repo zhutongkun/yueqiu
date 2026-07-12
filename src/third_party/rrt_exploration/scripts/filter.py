@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # --------Include modules---------------
 from copy import copy
@@ -54,7 +54,6 @@ def node():
     # this can be smaller than the laser scanner range, >> smaller >>less computation time>> too small is not good, info gain won't be accurate
     info_radius = rospy.get_param('~info_radius', 1.0)
     goals_topic = rospy.get_param('~goals_topic', '/detected_points')
-    print(goals_topic)
     n_robots = rospy.get_param('~n_robots', 1)
     namespace = rospy.get_param('~namespace', '')
     namespace_init_count = rospy.get_param('namespace_init_count', 1)

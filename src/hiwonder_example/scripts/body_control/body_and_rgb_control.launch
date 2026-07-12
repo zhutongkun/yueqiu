@@ -1,9 +1,0 @@
-<?xml version="1.0"?>
-<!--肢体控制融合RGB-->
-<launch>
-    <include file="$(find hiwonder_peripherals)/launch/depth_cam.launch"/>
-    <!--底盘驱动(chassis driver)-->
-    <include file="$(find hiwonder_controller)/launch/hiwonder_controller.launch"/>
-
-    <node pkg="hiwonder_example" type="body_and_rgb_control.py" name="body_and_rgb_control" output="screen"/>
-</launch>

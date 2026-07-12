@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<launch>
+    <!--是否使用仿真-->
+
+    <node pkg="rviz" type="rviz" name="rviz" required="true" args="-d $(find navigation)/rviz/without_namespace/navigation.rviz"/>
+
+</launch>

@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="start"   default="false"/>
+    <arg name="pick_status"   default=""/>
+    <arg name="target_color" default="green_fruit"/>
+    <!-- <include file="$(find peripherals)/launch/depth_cam.launch"/>
+    <include file="$(find controller)/launch/controller.launch"/>
+    <include file="$(find kinematics)/launch/kinematics_node.launch"/> -->
+
+    <rosparam file="$(find agripicking)/config/config.yaml"   command="load"/>
+    <arg name="use_astra_camera" default="false" />
+    <arg name="node_name" default="yolov8" />
+    <rosparam param="/$(arg node_name)/classes">['red_fruit','green_fruit','red_tag','green_tag']</rosparam>
+
+    <node pkg="agripicking" type="yolov8_node.py" name="$(arg node_name)" output="screen">
+        <param name="engine"        value="best_agripicking.engine"/>
+        <param name="lib"           value="libmyplugins.so"/>
+        <param name="conf_thresh"   value="0.85"/>
+        <param name="use_astra_camera"   value="$(arg use_astra_camera)"/>
+    </node>
+
+    <node pkg="agripicking" type="agricultural_picking.py" name="agricultural_picking" output="screen">
+        <param name="start" value="$(arg start)"/>
+        <param name="status" value="$(arg pick_status)"/>
+        <param name="target_color" value="$(arg target_color)"/>
+    </node>
+
+</launch>

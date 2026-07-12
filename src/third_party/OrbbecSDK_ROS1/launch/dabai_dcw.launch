@@ -3,7 +3,7 @@
     <arg name="camera_name" default="camera"/>
     <arg name="output" default="screen"/>
     <!-- Hardware depth registration -->
-    <arg name="depth_registration" default="false"/>
+    <arg name="depth_registration" default="true"/>
     <arg name="serial_number" default=""/>
     <arg name="usb_port" default=""/>
     <arg name="device_num" default="1"/>

@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<!--颜色分拣-->
+<launch>
+    <include file="$(find peripherals)/launch/depth_cam.launch">
+        <arg name="depth_camera_type"                 value="Gemini"/>
+    </include>
+    <include file="$(find controller)/launch/controller.launch"/>
+    <!--运动学节点(chassis driver)-->
+    <include file="$(find kinematics)/launch/kinematics_node.launch">
+    </include>
+    <rosparam param="/offset_x">0</rosparam>
+    <rosparam param="/offset_+y">0</rosparam>
+    <rosparam param="/offset_-y">0</rosparam>
+    <rosparam param="/offset_z">0</rosparam>
+    <node pkg="example" type="desk_color_sorting_node.py" name="color_sorting" output="screen">
+    </node>
+</launch>

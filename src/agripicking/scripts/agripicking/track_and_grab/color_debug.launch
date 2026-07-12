@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="start"   default="false"/>
+    <arg name="display"   default="false"/>
+
+    <include file="$(find peripherals)/launch/depth_cam.launch"/>
+    <include file="$(find controller)/launch/controller.launch"/>
+    <include file="$(find kinematics)/launch/kinematics_node.launch"/>
+    <rosparam file="$(find agripicking)/config/config.yaml"   command="load"/>
+
+    <node pkg="agripicking" type="color_debug.py" name="color_debug" output="screen">
+        <param name="start" value="$(arg start)"/>
+        <param name="display" value="$(arg display)"/>
+    </node>
+
+</launch>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="roslander" xmlns:xacro="http://ros.org/wiki/xacro">
+    <xacro:property name="camera_type"      value="$(env DEPTH_CAMERA_TYPE)"/>
+    <xacro:if value="${camera_type == 'AstraProPlus'}">
+        <xacro:include filename="$(find roslander_description)/urdf/roslander_without_arm.urdf.xacro"/>
+    </xacro:if>
+    <xacro:if value="${camera_type != 'AstraProPlus'}">
+        <xacro:include filename="$(find roslander_description)/urdf/roslander.urdf.xacro"/>
+    </xacro:if>
+</robot>

@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="start"   default="true"/>
+
+    <!--底盘驱动(chassis driver)-->
+
+    <include file="$(find controller)/launch/controller.launch"/>
+    <include file="$(find kinematics)/launch/kinematics_node.launch"/>
+
+     <node pkg="agripicking" type="arm_set.py" name="arm_set" output="screen" /> 
+
+</launch>
