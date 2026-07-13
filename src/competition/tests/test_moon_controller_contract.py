@@ -116,6 +116,50 @@ class ControllerContractTests(unittest.TestCase):
         self.assertNotIn('begin_return_to_base', calls)
         self.assertNotIn('mark_all_tasks_finished', calls)
 
+    def test_first_two_scene_points_rotate_with_expected_return_policy(self):
+        calls = []
+        for node in ast.walk(self.methods['control']):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'detect_moon_scene_at_task_point'
+            ):
+                continue
+            task_index = node.args[0].value
+            keywords = {item.arg: item.value.value for item in node.keywords}
+            calls.append(
+                (
+                    task_index,
+                    keywords.get('rotate', False),
+                    keywords.get('reverse_rotate', False),
+                )
+            )
+        self.assertIn((1, True, False), calls)
+        self.assertIn((2, True, True), calls)
+        self.assertIn((3, False, False), calls)
+
+    def test_scene_rotation_happens_before_detector_services(self):
+        method_source = ast.get_source_segment(
+            self.source, self.methods['detect_moon_scene_at_task_point']
+        )
+        outbound = method_source.index('self._rotate_for_moon_scene(')
+        unload = method_source.index('self._unload_yolo_for_mission(', outbound)
+        finalizer = method_source.index('finally:', unload)
+        reverse = method_source.index('reverse=True', finalizer)
+        self.assertLess(outbound, unload)
+        self.assertLess(unload, finalizer)
+        self.assertLess(finalizer, reverse)
+
+    def test_scene_rotation_is_parameterised_and_logged(self):
+        init_source = ast.get_source_segment(self.source, self.methods['__init__'])
+        rotate_source = ast.get_source_segment(
+            self.source, self.methods['_rotate_for_moon_scene']
+        )
+        self.assertIn("'moon_rotation_degrees', 90.0", init_source)
+        self.assertIn("'moon_rotation_speed', 0.5", init_source)
+        self.assertIn('self.moon_rotation_duration', rotate_source)
+        self.assertIn("'Moon task point %d: rotate %s %.1f degrees'", rotate_source)
+
     def test_third_scene_scan_precedes_original_reverse(self):
         method_source = ast.get_source_segment(self.source, self.methods['control'])
         third_scan = method_source.index('detect_moon_scene_at_task_point(3)')

@@ -152,6 +152,8 @@ sequenceDiagram
 
 用户提供的旧日志显示的是两个连续任务，而不是放置内部启动识别：`1783931844.773 start place_3` 是第一次放置；`1783931853.640` 已开始导航至 `pick2`；`1783931879.450 GOAL Reached` 后，`1783931881.680 === safe_pick start ===` 才进入第二次夹取。旧版本把 `/shape_recognition/start` 留在 `safe_pick` 内，因此视觉启动看起来偏晚；本分支把它前移到第二次夹取点、最后靠近动作之前。`1783931911.980 pick2: 执行第三次环境识别` 则是夹取尝试结束后的 Moon 任务点 3，和 `/shape_recognition/pick` 不是同一个识别系统。
 
+Moon 场景点转向策略为：任务点 1 左转 90°且不回转，任务点 2 左转 90°并在会话 `finally` 中右转 90°恢复，任务点 3 不旋转。`_rotate_for_moon_scene()` 在 `_unload_yolo_for_mission()` 之前执行，避免视觉节点缺失、GPU 卸载失败或模型启动失败时直接跳过底盘转向。默认角度和角速度为 `moon_rotation_degrees=90.0`、`moon_rotation_speed=0.5`。
+
 ## 7. 本分支状态与职责边界
 
 本分支将生命周期拆分为：

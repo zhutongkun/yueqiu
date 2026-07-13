@@ -115,6 +115,16 @@ class LaunchAndConfigContractTests(unittest.TestCase):
             480.0,
         )
 
+    def test_first_two_scene_rotation_defaults_are_explicit(self):
+        self.assertEqual(
+            90.0,
+            numeric_config_value(MISSION_CONFIG, 'moon_rotation_degrees'),
+        )
+        self.assertEqual(
+            0.5,
+            numeric_config_value(MISSION_CONFIG, 'moon_rotation_speed'),
+        )
+
 
 class BuildMetadataContractTests(unittest.TestCase):
     def test_runtime_catkin_dependencies_are_declared(self):

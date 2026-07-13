@@ -169,6 +169,19 @@ class VoiceControlNavNode(MissionLifecycle):
         self.moon_session_timeout = float(
             self._mission_param('moon_session_timeout', 25.0)
         )
+        self.moon_rotation_degrees = abs(
+            float(self._mission_param('moon_rotation_degrees', 90.0))
+        )
+        self.moon_rotation_speed = abs(
+            float(self._mission_param('moon_rotation_speed', 0.5))
+        )
+        if self.moon_rotation_degrees <= 0.0:
+            raise ValueError('moon_rotation_degrees must be positive')
+        if self.moon_rotation_speed <= 0.0:
+            raise ValueError('moon_rotation_speed must be positive')
+        self.moon_rotation_duration = math.radians(
+            self.moon_rotation_degrees
+        ) / self.moon_rotation_speed
         self.moon_detection_timeout = float(
             self._mission_param('moon_detection_timeout', 12.0)
         )
@@ -1521,6 +1534,23 @@ class VoiceControlNavNode(MissionLifecycle):
             result['error'] = str(exc)
             return result
 
+    def _rotate_for_moon_scene(
+        self, task_point_index, reverse=False, deadline=None
+    ):
+        direction = 'right' if reverse else 'left'
+        angular_z = self.moon_rotation_speed if reverse else -self.moon_rotation_speed
+        rospy.loginfo(
+            'Moon task point %d: rotate %s %.1f degrees',
+            task_point_index,
+            direction,
+            self.moon_rotation_degrees,
+        )
+        return self._drive_for(
+            angular_z=angular_z,
+            duration=self.moon_rotation_duration,
+            deadline=deadline,
+        )
+
     def detect_moon_scene_at_task_point(
         self, task_point_index, rotate=False, reverse_rotate=False
     ):
@@ -1529,7 +1559,9 @@ class VoiceControlNavNode(MissionLifecycle):
         session_id = uuid.uuid4().hex
         session_deadline = self._make_local_deadline(self.moon_session_timeout)
         reverse_cleanup_reserve = (
-            math.pi + 1.5 if rotate and reverse_rotate else 0.0
+            self.moon_rotation_duration + 1.5
+            if rotate and reverse_rotate
+            else 0.0
         )
         detector_deadline = session_deadline - reverse_cleanup_reserve
         self.safe_stop_robot()
@@ -1544,108 +1576,122 @@ class VoiceControlNavNode(MissionLifecycle):
             )
             self._store_moon_result(task_point_index, result)
             return result
-        if not self._unload_yolo_for_mission(deadline=detector_deadline):
-            result = self._moon_failure_result(
-                task_point_index,
-                session_id,
-                'detector_unavailable',
-                'existing mineral-card YOLO could not release its GPU context',
-            )
-            self._store_moon_result(task_point_index, result)
-            return result
-        if rotate and not self._drive_for(
-            angular_z=-0.5, duration=math.pi, deadline=detector_deadline
-        ):
-            result = self._moon_failure_result(
-                task_point_index, session_id, 'stopped', 'rotation interrupted'
-            )
-            self._store_moon_result(task_point_index, result)
-            return result
 
-        started_at_ros = rospy.Time.now().to_sec()
-        request = {
-            'task_point_index': task_point_index,
-            'session_id': session_id,
-            'started_at_ros': started_at_ros,
-        }
-        with self._moon_result_lock:
-            self._current_moon_request = request
-            self._current_moon_result = None
-            self._moon_result_event.clear()
+        rotated = False
+        if rotate:
+            if not self._rotate_for_moon_scene(
+                task_point_index, reverse=False, deadline=detector_deadline
+            ):
+                result = self._moon_failure_result(
+                    task_point_index, session_id, 'stopped', 'rotation interrupted'
+                )
+                self._store_moon_result(task_point_index, result)
+                return result
+            rotated = True
 
         result = None
+        detector_touched = False
         try:
-            reset_response = self.call_trigger(
-                '/moon_detector/reset', timeout=3.0, deadline=detector_deadline
-            )
-            if reset_response is None or not reset_response.success:
+            if not self._unload_yolo_for_mission(deadline=detector_deadline):
                 result = self._moon_failure_result(
-                    task_point_index, session_id, 'detector_unavailable', 'reset failed'
+                    task_point_index,
+                    session_id,
+                    'detector_unavailable',
+                    'existing mineral-card YOLO could not release its GPU context',
                 )
             else:
-                rospy.set_param('/moon_detector/request/task_point_index', task_point_index)
-                rospy.set_param('/moon_detector/request/session_id', session_id)
-                rospy.set_param('/moon_detector/request/started_at_ros', started_at_ros)
-                start_response = self.call_trigger(
-                    '/moon_detector/start',
-                    timeout=self.moon_start_timeout,
-                    deadline=detector_deadline,
+                started_at_ros = rospy.Time.now().to_sec()
+                request = {
+                    'task_point_index': task_point_index,
+                    'session_id': session_id,
+                    'started_at_ros': started_at_ros,
+                }
+                with self._moon_result_lock:
+                    self._current_moon_request = request
+                    self._current_moon_result = None
+                    self._moon_result_event.clear()
+
+                detector_touched = True
+                reset_response = self.call_trigger(
+                    '/moon_detector/reset', timeout=3.0, deadline=detector_deadline
                 )
-                if start_response is None or not start_response.success:
+                if reset_response is None or not reset_response.success:
                     result = self._moon_failure_result(
                         task_point_index,
                         session_id,
-                        'model_error',
-                        start_response.message if start_response is not None else 'start failed',
+                        'detector_unavailable',
+                        'reset failed',
                     )
                 else:
-                    detection_timeout = self._bounded_timeout(
-                        self.moon_detection_timeout, deadline=detector_deadline
+                    rospy.set_param(
+                        '/moon_detector/request/task_point_index', task_point_index
                     )
-                    detection_deadline = time.monotonic() + detection_timeout
-                    while (
-                        not rospy.is_shutdown()
-                        and time.monotonic() < detection_deadline
-                    ):
-                        if self.stop_requested:
-                            break
-                        if self._moon_result_event.is_set():
-                            break
-                        self._moon_result_event.wait(
-                            min(
-                                0.05,
-                                max(0.0, detection_deadline - time.monotonic()),
-                            )
-                        )
-                    with self._moon_result_lock:
-                        payload = self._current_moon_result
-                    if payload is None:
+                    rospy.set_param('/moon_detector/request/session_id', session_id)
+                    rospy.set_param(
+                        '/moon_detector/request/started_at_ros', started_at_ros
+                    )
+                    start_response = self.call_trigger(
+                        '/moon_detector/start',
+                        timeout=self.moon_start_timeout,
+                        deadline=detector_deadline,
+                    )
+                    if start_response is None or not start_response.success:
                         result = self._moon_failure_result(
                             task_point_index,
                             session_id,
-                            'timeout',
-                            'no fresh result before controller timeout',
+                            'model_error',
+                            start_response.message
+                            if start_response is not None
+                            else 'start failed',
                         )
                     else:
-                        result = self._normalise_moon_result(
-                            task_point_index, session_id, payload
+                        detection_timeout = self._bounded_timeout(
+                            self.moon_detection_timeout, deadline=detector_deadline
                         )
+                        detection_deadline = time.monotonic() + detection_timeout
+                        while (
+                            not rospy.is_shutdown()
+                            and time.monotonic() < detection_deadline
+                        ):
+                            if self.stop_requested or self._moon_result_event.is_set():
+                                break
+                            self._moon_result_event.wait(
+                                min(
+                                    0.05,
+                                    max(
+                                        0.0,
+                                        detection_deadline - time.monotonic(),
+                                    ),
+                                )
+                            )
+                        with self._moon_result_lock:
+                            payload = self._current_moon_result
+                        if payload is None:
+                            result = self._moon_failure_result(
+                                task_point_index,
+                                session_id,
+                                'timeout',
+                                'no fresh result before controller timeout',
+                            )
+                        else:
+                            result = self._normalise_moon_result(
+                                task_point_index, session_id, payload
+                            )
         finally:
-            self.stop_moon_detector(enforce_mission_budget=False)
+            if detector_touched:
+                self.stop_moon_detector(enforce_mission_budget=False)
             with self._moon_result_lock:
                 self._current_moon_request = None
                 self._current_moon_result = None
                 self._moon_result_event.clear()
             if (
-                rotate
+                rotated
                 and reverse_rotate
                 and not self.stop_requested
                 and not rospy.is_shutdown()
             ):
-                self._drive_for(
-                    angular_z=0.5,
-                    duration=math.pi,
-                    deadline=session_deadline,
+                self._rotate_for_moon_scene(
+                    task_point_index, reverse=True, deadline=session_deadline
                 )
             self._restart_yolo(deadline=session_deadline)
             self.safe_stop_robot()
