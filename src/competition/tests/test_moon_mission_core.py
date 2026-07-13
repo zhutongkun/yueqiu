@@ -22,6 +22,7 @@ from moon_mission_core import (  # noqa: E402
     STOPPED,
     WAITING_FOR_START,
     MissionLifecycle,
+    MissionTimeBudget,
     MultiFrameVoter,
     atomic_write_json,
 )
@@ -60,6 +61,81 @@ class FakeClock(object):
 
     def advance(self, seconds):
         self.value += seconds
+
+
+class MissionTimeBudgetTests(unittest.TestCase):
+    def test_body_work_stops_with_sixty_seconds_reserved(self):
+        clock = FakeClock()
+        budget = MissionTimeBudget(
+            total_seconds=450.0,
+            return_reserve_seconds=60.0,
+            announcement_reserve_seconds=20.0,
+            clock=clock,
+        )
+        budget.start()
+        self.assertEqual(390.0, budget.remaining(reserve_seconds=60.0))
+        clock.advance(360.0)
+        self.assertEqual(30.0, budget.remaining(reserve_seconds=60.0))
+        self.assertEqual(90.0, budget.remaining())
+
+    def test_timeout_is_clamped_by_global_and_stage_deadlines(self):
+        clock = FakeClock()
+        budget = MissionTimeBudget(clock=clock)
+        budget.start()
+        clock.advance(380.0)
+        self.assertEqual(
+            10.0,
+            budget.bounded_timeout(35.0, reserve_seconds=60.0),
+        )
+        self.assertEqual(
+            4.0,
+            budget.bounded_timeout(
+                35.0,
+                reserve_seconds=0.0,
+                stage_deadline=clock.value + 4.0,
+            ),
+        )
+
+    def test_hard_deadline_never_extends_past_seven_and_a_half_minutes(self):
+        clock = FakeClock()
+        budget = MissionTimeBudget(total_seconds=450.0, clock=clock)
+        budget.start()
+        clock.advance(449.9)
+        self.assertAlmostEqual(0.1, budget.bounded_timeout(10.0), places=6)
+        clock.advance(0.1)
+        self.assertEqual(0.0, budget.bounded_timeout(10.0))
+
+    def test_return_and_announcement_windows_are_preserved(self):
+        clock = FakeClock()
+        budget = MissionTimeBudget(clock=clock)
+        budget.start()
+        clock.advance(390.0)
+        self.assertEqual(
+            40.0,
+            budget.remaining(reserve_seconds=budget.announcement_reserve_seconds),
+        )
+        clock.advance(40.0)
+        self.assertEqual(20.0, budget.remaining())
+        clock.advance(20.0)
+        self.assertEqual(0.0, budget.remaining())
+
+    def test_stage_deadline_respects_parent_deadline(self):
+        clock = FakeClock()
+        budget = MissionTimeBudget(clock=clock)
+        budget.start()
+        parent_deadline = clock.value + 8.0
+        self.assertEqual(
+            parent_deadline,
+            budget.make_stage_deadline(25.0, parent_deadline=parent_deadline),
+        )
+
+    def test_invalid_reserve_configuration_is_rejected(self):
+        with self.assertRaises(ValueError):
+            MissionTimeBudget(
+                total_seconds=60.0,
+                return_reserve_seconds=60.0,
+                announcement_reserve_seconds=20.0,
+            )
 
 
 class MissionLifecycleStartTests(unittest.TestCase):

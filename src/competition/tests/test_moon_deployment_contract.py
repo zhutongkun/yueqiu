@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import pathlib
+import re
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -22,6 +23,17 @@ YOLO_GENERAL = PACKAGE_ROOT / 'third_party' / 'yolov5' / 'utils' / 'general.py'
 
 def source(path):
     return path.read_text(encoding='utf-8')
+
+
+def numeric_config_value(path, name):
+    match = re.search(
+        r'^%s:\s*([0-9]+(?:\.[0-9]+)?)\s*$' % re.escape(name),
+        source(path),
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError('numeric config key %s was not found' % name)
+    return float(match.group(1))
 
 
 class LaunchAndConfigContractTests(unittest.TestCase):
@@ -67,6 +79,41 @@ class LaunchAndConfigContractTests(unittest.TestCase):
         self.assertIn('/competition_mission/enable_voice', main_launch)
         self.assertIn("arg('enable_voice') != 'false'", main_launch)
         self.assertIn('competition)/launch/mic_init.launch', main_launch)
+
+    def test_stage_caps_fit_exactly_inside_the_body_budget(self):
+        mission_timeout = numeric_config_value(
+            MISSION_CONFIG, 'mission_timeout_seconds'
+        )
+        return_reserve = numeric_config_value(
+            MISSION_CONFIG, 'return_reserve_seconds'
+        )
+        stage_total = sum(
+            numeric_config_value(MISSION_CONFIG, name)
+            for name in (
+                'initial_stage_timeout',
+                'detect_stage_timeout',
+                'pick_stage_timeout',
+                'place_stage_timeout',
+                'pick_stage_timeout',
+                'place_stage_timeout',
+                'remaining_tasks_timeout',
+            )
+        )
+        self.assertEqual(mission_timeout - return_reserve, stage_total)
+
+    def test_return_and_announcement_fit_before_hard_deadline(self):
+        return_reserve = numeric_config_value(
+            MISSION_CONFIG, 'return_reserve_seconds'
+        )
+        return_stage = numeric_config_value(MISSION_CONFIG, 'return_stage_timeout')
+        announcement_stage = numeric_config_value(
+            MISSION_CONFIG, 'announcement_stage_timeout'
+        )
+        self.assertLessEqual(return_stage + announcement_stage, return_reserve)
+        self.assertLess(
+            numeric_config_value(MISSION_CONFIG, 'mission_timeout_seconds'),
+            480.0,
+        )
 
 
 class BuildMetadataContractTests(unittest.TestCase):

@@ -132,10 +132,10 @@ class ControllerContractTests(unittest.TestCase):
         second_place = method_source.index(
             "self.control(1.24, -0.22, 40.0, 'place')", second_pick
         )
-        remaining_tasks = method_source.index('self._prepare_remaining_tasks()', second_place)
+        remaining_tasks = method_source.index('self._prepare_remaining_tasks', second_place)
         mark_all = method_source.index('self.mark_all_tasks_finished()', remaining_tasks)
-        begin_return = method_source.index('self.begin_return_to_base()', mark_all)
-        announce = method_source.index('self.announce_all_task_results_at_base()', begin_return)
+        begin_return = method_source.index('self.begin_return_to_base', mark_all)
+        announce = method_source.index('self.announce_all_task_results_at_base', begin_return)
         self.assertLess(second_pick, second_place)
         self.assertLess(second_place, remaining_tasks)
         self.assertLess(remaining_tasks, mark_all)
@@ -218,6 +218,130 @@ class ControllerContractTests(unittest.TestCase):
         method_source = ast.get_source_segment(self.source, self.methods['control'])
         self.assertIn('timeout=self.place_service_timeout', method_source)
 
+    def test_place_3_does_not_wait_on_a_stale_shared_status(self):
+        method_source = ast.get_source_segment(self.source, self.methods['control'])
+        place_start = method_source.index("if set_status == 'place':")
+        detect_start = method_source.index("if set_status == 'detect':", place_start)
+        place_source = method_source[place_start:detect_start]
+        self.assertNotIn('wait_correction_status', place_source)
+
+    def test_global_deadline_has_return_and_announcement_reserves(self):
+        init_source = ast.get_source_segment(self.source, self.methods['__init__'])
+        self.assertIn("'mission_timeout_seconds', 450.0", init_source)
+        self.assertIn("'return_reserve_seconds', 60.0", init_source)
+        self.assertIn("'announcement_reserve_seconds', 20.0", init_source)
+        self.assertIn('MissionTimeBudget(', init_source)
+
+    def test_every_main_stage_uses_aggregate_timeout_wrapper(self):
+        method_source = ast.get_source_segment(
+            self.source, self.methods['run_mission_once']
+        )
+        for stage_name in (
+            'initial departure',
+            'resource-library detection',
+            'first pickup',
+            'first placement',
+            'second pickup',
+            'second placement',
+            'post-recognition tasks',
+            'return to base',
+            'announce results',
+        ):
+            self.assertIn("'%s'" % stage_name, method_source)
+        self.assertGreaterEqual(method_source.count('self._run_timed_stage('), 9)
+
+    def test_stage_timeout_sets_cancellation_before_returning(self):
+        method_source = ast.get_source_segment(
+            self.source, self.methods['_run_timed_stage']
+        )
+        self.assertIn('threading.Thread(', method_source)
+        self.assertIn('completed.wait(wait_seconds)', method_source)
+        self.assertIn('self.stop_requested = True', method_source)
+        self.assertIn('self.cancel_navigation_and_stop()', method_source)
+        self.assertGreaterEqual(
+            method_source.count('self._active_stage_deadline = previous_deadline'),
+            2,
+        )
+
+    def test_navigation_and_motion_use_monotonic_bounded_deadlines(self):
+        navigation_source = ast.get_source_segment(
+            self.source, self.methods['navigate_and_wait']
+        )
+        motion_source = ast.get_source_segment(self.source, self.methods['_drive_for'])
+        self.assertIn('self._bounded_timeout(', navigation_source)
+        self.assertIn('time.monotonic()', navigation_source)
+        self.assertNotIn('rospy.Time.now()', navigation_source)
+        self.assertIn('self._ensure_time_remaining(', motion_source)
+        self.assertIn('time.monotonic()', motion_source)
+
+    def test_missing_service_has_short_discovery_timeout(self):
+        method_source = ast.get_source_segment(self.source, self.methods['call_trigger'])
+        self.assertIn('self.service_discovery_timeout', method_source)
+        self.assertIn('discovery_allowed', method_source)
+        self.assertIn('timeout=discovery_allowed', method_source)
+
+    def test_late_pick_and_place_responses_are_neutralised(self):
+        method_source = ast.get_source_segment(self.source, self.methods['call_trigger'])
+        self.assertIn("'/shape_recognition/pick': '/shape_recognition/stop'", method_source)
+        self.assertIn(
+            "'/position_correction/place_3': '/position_correction/stop'",
+            method_source,
+        )
+        self.assertIn('cleanup_lock = threading.Lock()', method_source)
+        self.assertIn('cleanup_started[0]', method_source)
+
+    def test_reset_waits_for_stage_and_service_workers_to_exit(self):
+        method_source = ast.get_source_segment(
+            self.source, self.methods['reset_mission_callback']
+        )
+        self.assertIn('self._active_stage_worker', method_source)
+        self.assertIn('self._has_pending_service_workers()', method_source)
+
+    def test_shape_node_is_prewarmed_before_final_pick_approach(self):
+        method_source = ast.get_source_segment(self.source, self.methods['control'])
+        pick1_start = method_source.index("if set_status == 'pick1':")
+        pick2_start = method_source.index("if set_status == 'pick2':", pick1_start)
+        place_start = method_source.index("if set_status == 'place':", pick2_start)
+        for branch_source in (
+            method_source[pick1_start:pick2_start],
+            method_source[pick2_start:place_start],
+        ):
+            prewarm = branch_source.index('self._prepare_shape_pick(')
+            approach = branch_source.index('self._drive_for(', prewarm)
+            pick = branch_source.index('self.safe_pick(prepared=True', approach)
+            self.assertLess(prewarm, approach)
+            self.assertLess(approach, pick)
+
+    def test_shape_pick_trigger_remains_after_chassis_stop(self):
+        method_source = ast.get_source_segment(self.source, self.methods['safe_pick'])
+        stop = method_source.index('self.safe_stop_robot()')
+        trigger = method_source.index("'/shape_recognition/pick'", stop)
+        self.assertLess(stop, trigger)
+
+    def test_pick_deadline_covers_prewarm_approach_and_pick(self):
+        method_source = ast.get_source_segment(self.source, self.methods['control'])
+        self.assertEqual(2, method_source.count('pick_deadline = self._make_local_deadline('))
+        self.assertEqual(
+            2,
+            method_source.count('self._prepare_shape_pick(deadline=pick_deadline)'),
+        )
+        self.assertEqual(
+            2,
+            method_source.count(
+                'self.safe_pick(prepared=True, deadline=pick_deadline)'
+            ),
+        )
+
+    def test_audio_playback_is_bounded(self):
+        play_source = ast.get_source_segment(self.source, self.methods['play'])
+        audio_source = ast.get_source_segment(
+            self.source, self.methods['_play_audio_path']
+        )
+        self.assertIn('voice_play.get_path(', play_source)
+        self.assertIn('self.audio_playback_timeout', audio_source)
+        self.assertIn('timeout=playback_timeout', audio_source)
+        self.assertIn("['aplay', '-q', path]", audio_source)
+
     def test_all_mission_exit_paths_share_cleanup(self):
         method_source = ast.get_source_segment(
             self.source, self.methods['run_mission_once']
@@ -239,7 +363,7 @@ class ControllerContractTests(unittest.TestCase):
         method_source = ast.get_source_segment(
             self.source, self.methods['detect_moon_scene_at_task_point']
         )
-        unload = method_source.index('self._unload_yolo_for_mission()')
+        unload = method_source.index('self._unload_yolo_for_mission(')
         start = method_source.index("'/moon_detector/start'")
         self.assertLess(unload, start)
         self.assertIn('timeout=self.moon_start_timeout', method_source)
@@ -261,7 +385,7 @@ class ControllerContractTests(unittest.TestCase):
         method_source = ast.get_source_segment(
             self.source, self.methods['reset_mission_callback']
         )
-        unload = method_source.index('self.unload_moon_detector()')
+        unload = method_source.index('self.unload_moon_detector(')
         allow_yolo = method_source.index(
             'self._yolo_unloaded_for_mission = False', unload
         )
@@ -476,12 +600,59 @@ class SupportingNodeSafetyTests(unittest.TestCase):
         self.assertIn('generation != operation_generation', source)
         self.assertIn('mecnum_pub.publish(twist)', source)
 
+    def test_position_correction_initialisation_is_bounded_before_services(self):
+        source = load_source(POSITION_PATH)
+        deadline = source.index('initialization_deadline = time.monotonic() + 30.0')
+        ready = source.index("rospy.set_param('~init_finish', True)", deadline)
+        service = source.index("rospy.Service('~place_3'", ready)
+        self.assertLess(deadline, ready)
+        self.assertLess(ready, service)
+        self.assertIn('rospy.sleep(0.1)', source[deadline:ready])
+
+    def test_position_correction_lab_config_is_not_user_path_hardcoded(self):
+        source = load_source(POSITION_PATH)
+        self.assertIn("os.environ.get('LAB_CONFIG_PATH', '')", source)
+        self.assertIn("os.path.expanduser('~')", source)
+        self.assertNotIn('/home/ubuntu/', source)
+
+    def test_place3_status_covers_all_synchronous_arm_steps(self):
+        source = load_source(POSITION_PATH)
+        tree = ast.parse(source, filename=str(POSITION_PATH))
+        functions = {
+            node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
+        }
+        place_source = ast.get_source_segment(
+            source, functions['start_place_3_callback']
+        )
+        active = place_source.index("rospy.set_param('~status', 'place')")
+        final_stop = place_source.rindex("rospy.set_param('~status', 'stop')")
+        success = place_source.rindex('TriggerResponse(success=True)')
+        self.assertEqual(3, place_source.count('set_servos_if_active('))
+        self.assertEqual(3, place_source.count('sleep_if_active('))
+        self.assertLess(active, final_stop)
+        self.assertLess(final_stop, success)
+
     def test_shape_arm_thread_checks_cancellation_generation(self):
         source = load_source(SHAPE_PATH)
         self.assertIn('operation_generation', source)
         self.assertIn('_set_servos_if_active', source)
         self.assertIn('_sleep_if_active', source)
         self.assertIn('move_thread.join(timeout=1.0)', source)
+
+    def test_shape_sessions_reset_votes_and_expose_services_only_when_ready(self):
+        source = load_source(SHAPE_PATH)
+        methods = class_methods(SHAPE_PATH, 'RgbDepthImageNode')
+        start_source = ast.get_source_segment(source, methods['start_callback'])
+        stop_source = ast.get_source_segment(source, methods['stop_callback'])
+        pick_source = ast.get_source_segment(source, methods['pick_callback'])
+        for method_source in (start_source, stop_source, pick_source):
+            self.assertIn('self.count = 0', method_source)
+            self.assertIn("self.last_shape = 'none'", method_source)
+            self.assertIn('self.shape = None', method_source)
+        ready = source.index('self.ready = True')
+        service = source.index("rospy.Service('~start'", ready)
+        self.assertLess(ready, service)
+        self.assertIn("timeout=3.0", source)
 
     def test_close_services_quiesce_nodes_for_manual_reset(self):
         position_source = load_source(POSITION_PATH)

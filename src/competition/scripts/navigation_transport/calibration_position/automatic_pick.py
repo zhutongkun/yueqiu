@@ -58,7 +58,20 @@ status = "approach"
 count_stop = 0
 count_turn = 0
 
-lab_data = common.get_yaml_data("/home/ubuntu/software/lab_tool/lab_config.yaml")
+lab_config_candidates = (
+    os.environ.get('LAB_CONFIG_PATH', ''),
+    os.path.join(os.path.expanduser('~'), 'software', 'lab_tool', 'lab_config.yaml'),
+    os.path.join(os.path.dirname(config_path), 'lab_config.yaml'),
+)
+lab_config_path = next(
+    (path for path in lab_config_candidates if path and os.path.isfile(path)),
+    None,
+)
+if lab_config_path is None:
+    raise RuntimeError(
+        'lab_config.yaml was not found; set LAB_CONFIG_PATH for this robot'
+    )
+lab_data = common.get_yaml_data(lab_config_path)
 
 def begin_operation():
     global operation_generation, operation_cancel_requested
@@ -297,19 +310,27 @@ def start_place_3_callback(msg):
     generation = begin_operation()
 
     rospy.loginfo("start place_3")
+    rospy.set_param('~status', 'place')
     if not set_servos_if_active(generation, 2, ((1, 500), (2, 210), (3, 320), (4, 350), (5, 500), (10, 650))):
+        rospy.set_param('~status', 'stop')
         return TriggerResponse(success=False, message='place_3 was cancelled')
     if not sleep_if_active(generation, 2.0):
+        rospy.set_param('~status', 'stop')
         return TriggerResponse(success=False, message='place_3 was cancelled')
     if not set_servos_if_active(generation, 0.5, ((10, 200),)):
+        rospy.set_param('~status', 'stop')
         return TriggerResponse(success=False, message='place_3 was cancelled')
     if not sleep_if_active(generation, 0.5):
+        rospy.set_param('~status', 'stop')
         return TriggerResponse(success=False, message='place_3 was cancelled')
     if not set_servos_if_active(generation, 2, ((1, 500), (2, 720), (3, 100), (4, 150), (5, 500), (10, 200))):
+        rospy.set_param('~status', 'stop')
         return TriggerResponse(success=False, message='place_3 was cancelled')
     if not sleep_if_active(generation, 2.0):
+        rospy.set_param('~status', 'stop')
         return TriggerResponse(success=False, message='place_3 was cancelled')
 
+    rospy.set_param('~status', 'stop')
     return TriggerResponse(success=True)
 
 # 颜色识别
@@ -593,6 +614,33 @@ if __name__ == '__main__':
     # mecnum_pub = rospy.Publisher('/robot_1/controller/cmd_vel', Twist, queue_size=1)
     # image_pub = rospy.Publisher('~image_result', Image, queue_size=1)
 
+    debug = rospy.get_param('~debug', False)
+    rospy.sleep(1)
+    # while not rospy.is_shutdown():
+        # try:
+            # if rospy.get_param('/robot_1/servo_manager/init_finish') and rospy.get_param(
+                    # '/robot_1/joint_states_publisher/init_finish'):
+                # break
+        # except:
+            # rospy.sleep(0.1)
+    initialization_deadline = time.monotonic() + 30.0
+    ready = False
+    while not rospy.is_shutdown() and time.monotonic() < initialization_deadline:
+        try:
+            ready = bool(rospy.get_param('/servo_manager/init_finish')) and bool(
+                rospy.get_param('/joint_states_publisher/init_finish')
+            )
+        except KeyError:
+            ready = False
+        if ready:
+            break
+        rospy.sleep(0.1)
+    if not ready:
+        mecnum_pub.publish(Twist())
+        raise RuntimeError('position correction initialisation timed out')
+    rospy.sleep(2)
+    mecnum_pub.publish(Twist())
+    rospy.set_param('~init_finish', True)
     rospy.Service('~start', Trigger, start_callback)
     rospy.Service('~stop', Trigger, stop_callback)
     rospy.Service('~colse', Trigger, colse_callback)
@@ -604,27 +652,8 @@ if __name__ == '__main__':
     rospy.Service('~place_1', Trigger, start_place_callback)
     rospy.Service('~place_2', Trigger, start_place_2_callback)
     rospy.Service('~place_3', Trigger, start_place_3_callback)
-    debug = rospy.get_param('~debug', False)
-    rospy.sleep(1)
-    # while not rospy.is_shutdown():
-        # try:
-            # if rospy.get_param('/robot_1/servo_manager/init_finish') and rospy.get_param(
-                    # '/robot_1/joint_states_publisher/init_finish'):
-                # break
-        # except:
-            # rospy.sleep(0.1)
-    while not rospy.is_shutdown():
-        try:
-            if rospy.get_param('/servo_manager/init_finish') and rospy.get_param(
-                    '/joint_states_publisher/init_finish'):
-                break
-        except:
-            rospy.sleep(0.1)
-    rospy.sleep(2)
-    mecnum_pub.publish(Twist())
-    rospy.set_param('~init_finish', True)
     try:
         rospy.spin()
-    except exception as e:
-        mecnum_pub.publish(twist())
-        rospy.logerr(str(e))
+    except Exception as exc:
+        mecnum_pub.publish(Twist())
+        rospy.logerr(str(exc))

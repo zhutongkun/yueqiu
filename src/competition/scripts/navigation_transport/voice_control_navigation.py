@@ -36,6 +36,7 @@ from moon_mission_core import (
     STOPPED,
     WAITING_FOR_START,
     MissionLifecycle,
+    MissionTimeBudget,
     atomic_write_json,
 )
 
@@ -138,14 +139,38 @@ class VoiceControlNavNode(MissionLifecycle):
         self.initialization_timeout = float(
             self._mission_param('initialization_timeout', 60.0)
         )
+        self.mission_timeout_seconds = float(
+            self._mission_param('mission_timeout_seconds', 450.0)
+        )
+        self.return_reserve_seconds = float(
+            self._mission_param('return_reserve_seconds', 60.0)
+        )
+        self.announcement_reserve_seconds = float(
+            self._mission_param('announcement_reserve_seconds', 20.0)
+        )
+        self.deadline_warning_seconds = float(
+            self._mission_param('deadline_warning_seconds', 90.0)
+        )
+        self.service_discovery_timeout = float(
+            self._mission_param('service_discovery_timeout', 2.0)
+        )
         self.navigation_timeout = float(
-            self._mission_param('navigation_timeout', 60.0)
+            self._mission_param('navigation_timeout', 35.0)
+        )
+        self.pick_navigation_timeout = float(
+            self._mission_param('pick_navigation_timeout', 20.0)
+        )
+        self.return_navigation_timeout = float(
+            self._mission_param('return_navigation_timeout', 40.0)
         )
         self.move_base_server_timeout = float(
             self._mission_param('move_base_server_timeout', 10.0)
         )
+        self.moon_session_timeout = float(
+            self._mission_param('moon_session_timeout', 25.0)
+        )
         self.moon_detection_timeout = float(
-            self._mission_param('moon_detection_timeout', 18.0)
+            self._mission_param('moon_detection_timeout', 12.0)
         )
         self.maximum_result_age = float(
             self._mission_param('maximum_result_age', 5.0)
@@ -153,17 +178,65 @@ class VoiceControlNavNode(MissionLifecycle):
         self.place_service_timeout = float(
             self._mission_param('place_service_timeout', 8.0)
         )
+        self.correction_status_timeout = float(
+            self._mission_param('correction_status_timeout', 15.0)
+        )
+        self.shape_start_timeout = float(
+            self._mission_param('shape_start_timeout', 3.0)
+        )
+        self.shape_pick_service_timeout = float(
+            self._mission_param('shape_pick_service_timeout', 4.0)
+        )
+        self.shape_pick_timeout = float(
+            self._mission_param('shape_pick_timeout', 18.0)
+        )
+        self.shape_pick_stage_timeout = float(
+            self._mission_param('shape_pick_stage_timeout', 25.0)
+        )
+        self.shape_stop_timeout = float(
+            self._mission_param('shape_stop_timeout', 1.0)
+        )
+        self.shape_warmup_seconds = float(
+            self._mission_param('shape_warmup_seconds', 0.5)
+        )
+        self.yolo_detection_timeout = float(
+            self._mission_param('yolo_detection_timeout', 8.0)
+        )
         self.yolo_start_timeout = float(
-            self._mission_param('yolo_start_timeout', 15.0)
+            self._mission_param('yolo_start_timeout', 12.0)
         )
         self.yolo_unload_timeout = float(
-            self._mission_param('yolo_unload_timeout', 10.0)
+            self._mission_param('yolo_unload_timeout', 5.0)
         )
         self.moon_start_timeout = float(
-            self._mission_param('moon_start_timeout', 60.0)
+            self._mission_param('moon_start_timeout', 12.0)
         )
         self.moon_unload_timeout = float(
-            self._mission_param('moon_unload_timeout', 10.0)
+            self._mission_param('moon_unload_timeout', 5.0)
+        )
+        self.audio_playback_timeout = float(
+            self._mission_param('audio_playback_timeout', 4.0)
+        )
+        self.initial_stage_timeout = float(
+            self._mission_param('initial_stage_timeout', 20.0)
+        )
+        self.detect_stage_timeout = float(
+            self._mission_param('detect_stage_timeout', 50.0)
+        )
+        self.pick_stage_timeout = float(
+            self._mission_param('pick_stage_timeout', 85.0)
+        )
+        self.place_stage_timeout = float(
+            self._mission_param('place_stage_timeout', 45.0)
+        )
+        self.remaining_tasks_timeout = float(
+            self._mission_param('remaining_tasks_timeout', 60.0)
+        )
+        self.return_stage_timeout = float(
+            self._mission_param('return_stage_timeout', 40.0)
+        )
+        self.announcement_stage_timeout = float(
+            self._mission_param('announcement_stage_timeout', 20.0)
         )
         self.voice_volume = int(self._mission_param('voice_volume', 100))
         self.use_ramp_alignment_service = bool(
@@ -186,7 +259,16 @@ class VoiceControlNavNode(MissionLifecycle):
             self._mission_param('ramp_return_speed', 0.25)
         )
         self.ramp_return_timeout = float(
-            self._mission_param('ramp_return_timeout', 20.0)
+            self._mission_param('ramp_return_timeout', 15.0)
+        )
+        self.ramp_alignment_timeout = float(
+            self._mission_param('ramp_alignment_timeout', 20.0)
+        )
+
+        self.mission_budget = MissionTimeBudget(
+            total_seconds=self.mission_timeout_seconds,
+            return_reserve_seconds=self.return_reserve_seconds,
+            announcement_reserve_seconds=self.announcement_reserve_seconds,
         )
 
         script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -221,9 +303,16 @@ class VoiceControlNavNode(MissionLifecycle):
         self._debug_action_lock = threading.Lock()
         self._debug_action_active = False
         self._moon_result_lock = threading.Lock()
+        self._service_worker_lock = threading.Lock()
+        self._pending_service_workers = set()
         self._moon_result_event = threading.Event()
         self._current_moon_request = None
         self._current_moon_result = None
+        self._active_stage_deadline = None
+        self._active_stage_name = None
+        self._active_stage_worker = None
+        self._deadline_warning_emitted = False
+        self._shape_pick_prepared = False
         self.vc_sub = None
         self._yolo_unloaded_for_mission = False
 
@@ -313,6 +402,195 @@ class VoiceControlNavNode(MissionLifecycle):
             'yaw': float(value.get('yaw', default['yaw'])),
         }
 
+    def _default_mission_reserve(self):
+        if self.mission_state in (STARTING, RUNNING):
+            return self.return_reserve_seconds
+        if self.mission_state == RETURNING_TO_BASE:
+            return self.announcement_reserve_seconds
+        return 0.0
+
+    def _effective_stage_deadline(self, deadline=None):
+        deadlines = [
+            value
+            for value in (self._active_stage_deadline, deadline)
+            if value is not None
+        ]
+        return min(deadlines) if deadlines else None
+
+    def _has_pending_service_workers(self):
+        with self._service_worker_lock:
+            self._pending_service_workers = {
+                worker
+                for worker in self._pending_service_workers
+                if worker.is_alive()
+            }
+            return bool(self._pending_service_workers)
+
+    def _bounded_timeout(
+        self,
+        requested_seconds,
+        reserve_seconds=None,
+        deadline=None,
+        enforce_mission_budget=True,
+    ):
+        requested = max(0.0, float(requested_seconds))
+        effective_deadline = self._effective_stage_deadline(deadline)
+        if not enforce_mission_budget:
+            return requested
+        reserve = (
+            self._default_mission_reserve()
+            if reserve_seconds is None
+            else max(0.0, float(reserve_seconds))
+        )
+        allowed = self.mission_budget.bounded_timeout(
+            requested,
+            reserve_seconds=reserve,
+            stage_deadline=effective_deadline,
+        )
+        if self.mission_budget.active:
+            remaining = self.mission_budget.remaining()
+            if (
+                remaining <= self.deadline_warning_seconds
+                and not self._deadline_warning_emitted
+            ):
+                self._deadline_warning_emitted = True
+                rospy.logwarn(
+                    'mission deadline warning: %.1f seconds remain before the hard stop',
+                    remaining,
+                )
+        return allowed
+
+    def _ensure_time_remaining(
+        self,
+        stage_name,
+        minimum_seconds=0.1,
+        reserve_seconds=None,
+        deadline=None,
+        enforce_mission_budget=True,
+    ):
+        minimum = max(0.0, float(minimum_seconds))
+        if enforce_mission_budget and (self.stop_requested or rospy.is_shutdown()):
+            self.safe_stop_robot()
+            return False
+        allowed = self._bounded_timeout(
+            minimum,
+            reserve_seconds=reserve_seconds,
+            deadline=deadline,
+            enforce_mission_budget=enforce_mission_budget,
+        )
+        if allowed + 1e-6 >= minimum:
+            return True
+        rospy.logerr(
+            'time budget exhausted before %s (needed %.1fs, available %.1fs)',
+            stage_name,
+            minimum,
+            allowed,
+        )
+        self.safe_stop_robot()
+        return False
+
+    def _make_local_deadline(
+        self, requested_seconds, reserve_seconds=None, parent_deadline=None
+    ):
+        reserve = (
+            self._default_mission_reserve()
+            if reserve_seconds is None
+            else max(0.0, float(reserve_seconds))
+        )
+        parent = self._effective_stage_deadline(parent_deadline)
+        return self.mission_budget.make_stage_deadline(
+            requested_seconds,
+            reserve_seconds=reserve,
+            parent_deadline=parent,
+        )
+
+    def _run_timed_stage(
+        self, stage_name, timeout_seconds, operation, reserve_seconds=None
+    ):
+        if not self._ensure_time_remaining(
+            stage_name,
+            minimum_seconds=0.1,
+            reserve_seconds=reserve_seconds,
+        ):
+            return False
+        previous_name = self._active_stage_name
+        previous_deadline = self._active_stage_deadline
+        stage_deadline = self._make_local_deadline(
+            timeout_seconds,
+            reserve_seconds=reserve_seconds,
+            parent_deadline=previous_deadline,
+        )
+        self._active_stage_name = stage_name
+        self._active_stage_deadline = stage_deadline
+        rospy.loginfo(
+            'stage %s started with %.1f seconds available',
+            stage_name,
+            max(0.0, stage_deadline - time.monotonic()),
+        )
+        completed = threading.Event()
+        outcome = {}
+
+        def invoke():
+            try:
+                outcome['succeeded'] = bool(operation())
+            except Exception as exc:
+                outcome['error'] = exc
+            finally:
+                completed.set()
+                if self._active_stage_worker is threading.current_thread():
+                    self._active_stage_worker = None
+
+        worker = threading.Thread(
+            target=invoke,
+            name='mission-stage-' + stage_name.replace(' ', '-'),
+        )
+        worker.daemon = True
+        self._active_stage_worker = worker
+        worker.start()
+        wait_seconds = max(0.0, stage_deadline - time.monotonic())
+        if not completed.wait(wait_seconds):
+            rospy.logerr('stage %s exceeded its aggregate timeout', stage_name)
+            with self._lock:
+                self.stop_requested = True
+            self.cancel_navigation_and_stop()
+            self._active_stage_name = previous_name
+            self._active_stage_deadline = previous_deadline
+            return False
+        self._active_stage_name = previous_name
+        self._active_stage_deadline = previous_deadline
+        if 'error' in outcome:
+            raise outcome['error']
+        return outcome.get('succeeded', False)
+
+    def _interruptible_sleep(
+        self,
+        seconds,
+        label='sleep',
+        reserve_seconds=None,
+        deadline=None,
+        enforce_mission_budget=True,
+        allow_stopped=False,
+    ):
+        duration = max(0.0, float(seconds))
+        if duration <= 0.0:
+            return True
+        if not self._ensure_time_remaining(
+            label,
+            minimum_seconds=duration,
+            reserve_seconds=reserve_seconds,
+            deadline=deadline,
+            enforce_mission_budget=enforce_mission_budget,
+        ):
+            return False
+        end_time = time.monotonic() + duration
+        while time.monotonic() < end_time:
+            if (self.stop_requested and not allow_stopped) or rospy.is_shutdown():
+                return False
+            time.sleep(min(0.05, max(0.0, end_time - time.monotonic())))
+        return (
+            (allow_stopped or not self.stop_requested) and not rospy.is_shutdown()
+        )
+
     def _initialise_arm(self):
         deadline = rospy.Time.now() + rospy.Duration(self.initialization_timeout)
         ready = False
@@ -379,6 +657,9 @@ class VoiceControlNavNode(MissionLifecycle):
             if self._debug_action_active:
                 rospy.logwarn('Rejected mission start while a manual debug action is active')
                 return False
+            if self._has_pending_service_workers():
+                rospy.logwarn('Rejected mission start while a timed-out service is still active')
+                return False
             accepted = self.request_start_token(
                 trigger_source, ros_shutdown=rospy.is_shutdown()
             )
@@ -390,6 +671,8 @@ class VoiceControlNavNode(MissionLifecycle):
                 )
                 return False
             self._reset_run_data()
+            self.mission_budget.start()
+            self._deadline_warning_emitted = False
             self.cancel_start_timeout()
             self.save_mission_results()
             self._mission_thread = threading.Thread(
@@ -401,6 +684,12 @@ class VoiceControlNavNode(MissionLifecycle):
             return True
 
     def _reset_run_data(self):
+        self.mission_budget.reset()
+        self._active_stage_deadline = None
+        self._active_stage_name = None
+        self._active_stage_worker = None
+        self._deadline_warning_emitted = False
+        self._shape_pick_prepared = False
         with self._lock:
             self.moon_task_results = {1: None, 2: None, 3: None}
             self.three_scene_recognitions_finished = False
@@ -433,7 +722,12 @@ class VoiceControlNavNode(MissionLifecycle):
 
     def reset_mission_callback(self, _request):
         with self._transition_lock:
-            active = self._mission_thread is not None and self._mission_thread.is_alive()
+            active = (
+                self._mission_thread is not None and self._mission_thread.is_alive()
+            ) or (
+                self._active_stage_worker is not None
+                and self._active_stage_worker.is_alive()
+            ) or self._has_pending_service_workers()
             if (
                 self.mission_state not in (COMPLETED, STOPPED, ERROR)
                 or active
@@ -444,12 +738,12 @@ class VoiceControlNavNode(MissionLifecycle):
                     message='reset requires COMPLETED, STOPPED, or ERROR with no active thread',
                 )
             self.safe_stop_robot()
-            if not self.safe_arm_pose(wait_seconds=2.0):
+            if not self.safe_arm_pose(wait_seconds=2.0, allow_stopped=True):
                 return TriggerResponse(
                     success=False,
                     message='reset rejected because the arm did not reach its safe pose',
                 )
-            if not self.unload_moon_detector():
+            if not self.unload_moon_detector(enforce_mission_budget=False):
                 return TriggerResponse(
                     success=False,
                     message='reset rejected because the Moon model could not be unloaded',
@@ -619,50 +913,98 @@ class VoiceControlNavNode(MissionLifecycle):
         except Exception:
             self.move_base_status = 1
 
-    def play(self, name):
+    def play(self, name, deadline=None):
         if not self.enable_voice:
             return True
-        try:
-            voice_play.play(name, volume=self.voice_volume, language=self.language)
-            return True
-        except Exception as exc:
-            rospy.logwarn('voice playback failed for %s: %s', name, exc)
-            return False
+        return self._play_audio_path(
+            voice_play.get_path(name, language=self.language), deadline=deadline
+        )
 
-    def play_moon_asset(self, asset_name):
+    def play_moon_asset(self, asset_name, deadline=None):
         if not self.enable_voice:
             return True
         path = os.path.join(self.moon_voice_dir, asset_name + '.wav')
+        return self._play_audio_path(path, deadline=deadline)
+
+    def _play_audio_path(self, path, deadline=None):
+        if self.stop_requested or rospy.is_shutdown():
+            return False
         if not os.path.isfile(path):
             rospy.logerr('offline voice asset is missing: %s', path)
             return False
+        mixer_timeout = self._bounded_timeout(1.0, deadline=deadline)
         try:
-            subprocess.call(
-                [
-                    'amixer',
-                    '-q',
-                    '-D',
-                    'pulse',
-                    'set',
-                    'Master',
-                    '%d%%' % self.voice_volume,
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except OSError:
+            if mixer_timeout > 0.0:
+                subprocess.call(
+                    [
+                        'amixer',
+                        '-q',
+                        '-D',
+                        'pulse',
+                        'set',
+                        'Master',
+                        '%d%%' % self.voice_volume,
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=mixer_timeout,
+                )
+        except (OSError, subprocess.TimeoutExpired):
             pass
+        playback_timeout = self._bounded_timeout(
+            self.audio_playback_timeout, deadline=deadline
+        )
+        if playback_timeout <= 0.0:
+            rospy.logerr('offline voice playback skipped because its deadline expired')
+            return False
         try:
-            return subprocess.call(['aplay', '-q', path], timeout=20.0) == 0
+            return (
+                subprocess.call(
+                    ['aplay', '-q', path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=playback_timeout,
+                )
+                == 0
+            )
         except Exception as exc:
             rospy.logerr('offline voice playback failed for %s: %s', path, exc)
             return False
 
-    def call_trigger(self, service_name, timeout=2.0):
-        timeout = max(0.1, float(timeout))
+    def call_trigger(
+        self,
+        service_name,
+        timeout=2.0,
+        discovery_timeout=None,
+        reserve_seconds=None,
+        deadline=None,
+        enforce_mission_budget=True,
+    ):
+        requested_timeout = max(0.1, float(timeout))
+        timeout = self._bounded_timeout(
+            requested_timeout,
+            reserve_seconds=reserve_seconds,
+            deadline=deadline,
+            enforce_mission_budget=enforce_mission_budget,
+        )
+        if (
+            enforce_mission_budget
+            and (self.stop_requested or rospy.is_shutdown())
+        ):
+            rospy.logwarn('service %s skipped after mission cancellation', service_name)
+            return None
+        if timeout <= 0.0:
+            rospy.logwarn('service %s skipped because its deadline expired', service_name)
+            return None
+        discovery_requested = (
+            self.service_discovery_timeout
+            if discovery_timeout is None
+            else max(0.1, float(discovery_timeout))
+        )
+        discovery_allowed = min(timeout, discovery_requested)
         started_at = time.monotonic()
         try:
-            rospy.wait_for_service(service_name, timeout=timeout)
+            rospy.wait_for_service(service_name, timeout=discovery_allowed)
         except Exception as exc:
             rospy.logwarn('service %s unavailable: %s', service_name, exc)
             return None
@@ -674,22 +1016,41 @@ class VoiceControlNavNode(MissionLifecycle):
 
         completed = threading.Event()
         abandoned = threading.Event()
+        cleanup_lock = threading.Lock()
+        cleanup_started = [False]
         outcome = {}
 
         def neutralise_late_response(response):
             if not getattr(response, 'success', False):
                 return
+            with cleanup_lock:
+                if cleanup_started[0]:
+                    return
+                cleanup_started[0] = True
             cleanup_service = {
                 '/moon_detector/start': '/moon_detector/stop',
                 '/ramp/start': '/ramp/stop',
                 '/ramp/up': '/ramp/stop',
                 '/shape_recognition/start': '/shape_recognition/stop',
+                '/shape_recognition/pick': '/shape_recognition/stop',
+                '/position_correction/start': '/position_correction/stop',
+                '/position_correction/pick_1': '/position_correction/stop',
+                '/position_correction/pick_2': '/position_correction/stop',
+                '/position_correction/pick_3': '/position_correction/stop',
+                '/position_correction/place_1': '/position_correction/stop',
+                '/position_correction/place_2': '/position_correction/stop',
+                '/position_correction/place_3': '/position_correction/stop',
                 '/yolov5/start': '/yolov5/stop',
             }.get(service_name)
             if not cleanup_service:
                 return
             try:
-                rospy.ServiceProxy(cleanup_service, Trigger)()
+                self.call_trigger(
+                    cleanup_service,
+                    timeout=1.0,
+                    discovery_timeout=0.5,
+                    enforce_mission_budget=False,
+                )
             except Exception as cleanup_exc:
                 rospy.logwarn(
                     'late service %s could not be neutralised through %s: %s',
@@ -707,20 +1068,36 @@ class VoiceControlNavNode(MissionLifecycle):
             except Exception as exc:
                 outcome['error'] = exc
             finally:
+                with self._service_worker_lock:
+                    self._pending_service_workers.discard(
+                        threading.current_thread()
+                    )
                 completed.set()
 
         worker = threading.Thread(target=invoke, name='trigger-' + service_name.strip('/').replace('/', '-'))
         worker.daemon = True
+        with self._service_worker_lock:
+            self._pending_service_workers.add(worker)
         worker.start()
         if not completed.wait(remaining):
             abandoned.set()
             if 'response' in outcome:
+                def cleanup_late_response():
+                    try:
+                        neutralise_late_response(outcome['response'])
+                    finally:
+                        with self._service_worker_lock:
+                            self._pending_service_workers.discard(
+                                threading.current_thread()
+                            )
+
                 cleanup_worker = threading.Thread(
-                    target=neutralise_late_response,
-                    args=(outcome['response'],),
+                    target=cleanup_late_response,
                     name='cleanup-' + service_name.strip('/').replace('/', '-'),
                 )
                 cleanup_worker.daemon = True
+                with self._service_worker_lock:
+                    self._pending_service_workers.add(cleanup_worker)
                 cleanup_worker.start()
             rospy.logwarn('service %s call exceeded its %.1fs timeout', service_name, timeout)
             return None
@@ -762,42 +1139,80 @@ class VoiceControlNavNode(MissionLifecycle):
     def cleanup_mission_execution(self):
         self.cancel_start_timeout()
         self.cancel_navigation_and_stop()
-        self.stop_moon_detector()
-        self.unload_moon_detector()
+        self.stop_moon_detector(enforce_mission_budget=False)
+        self.unload_moon_detector(enforce_mission_budget=False)
         if self.slope_surface:
-            self.call_trigger('/ramp/stop', timeout=1.0)
-        self.call_trigger('/position_correction/stop', timeout=1.0)
-        self.call_trigger('/shape_recognition/stop', timeout=1.0)
-        self.call_trigger('/yolov5/stop', timeout=1.0)
+            self.call_trigger(
+                '/ramp/stop', timeout=1.0, enforce_mission_budget=False
+            )
+        self.call_trigger(
+            '/position_correction/stop',
+            timeout=1.0,
+            enforce_mission_budget=False,
+        )
+        self.call_trigger(
+            '/shape_recognition/stop',
+            timeout=1.0,
+            enforce_mission_budget=False,
+        )
+        self.call_trigger(
+            '/yolov5/stop', timeout=1.0, enforce_mission_budget=False
+        )
         self._unload_yolo_for_mission()
         self.cancel_navigation_and_stop()
 
-    def _drive_for(self, linear_x=0.0, linear_y=0.0, angular_z=0.0, duration=0.0):
+    def _drive_for(
+        self,
+        linear_x=0.0,
+        linear_y=0.0,
+        angular_z=0.0,
+        duration=0.0,
+        deadline=None,
+    ):
+        duration = max(0.0, float(duration))
+        if not self._ensure_time_remaining(
+            'timed chassis motion', minimum_seconds=duration, deadline=deadline
+        ):
+            return False
         twist = Twist()
         twist.linear.x = linear_x
         twist.linear.y = linear_y
         twist.angular.z = angular_z
-        deadline = rospy.Time.now() + rospy.Duration(max(0.0, duration))
-        rate = rospy.Rate(20)
+        motion_deadline = time.monotonic() + duration
         try:
-            while not rospy.is_shutdown() and rospy.Time.now() < deadline:
+            while not rospy.is_shutdown() and time.monotonic() < motion_deadline:
                 if self.stop_requested:
                     return False
                 self.mecanum_pub.publish(twist)
-                rate.sleep()
+                time.sleep(min(0.05, max(0.0, motion_deadline - time.monotonic())))
             return not self.stop_requested and not rospy.is_shutdown()
         finally:
             self.safe_stop_robot()
 
-    def safe_arm_pose(self, wait_seconds=1.0):
+    def safe_arm_pose(self, wait_seconds=1.0, allow_stopped=False):
         command_duration = 2.0
+        total_wait = max(command_duration, float(wait_seconds))
+        if not self._ensure_time_remaining(
+            'safe arm pose',
+            minimum_seconds=total_wait,
+            enforce_mission_budget=not allow_stopped,
+        ):
+            self.mechanical_arm_safe = False
+            return False
         try:
             bus_servo_control.set_servos(
                 self.joints_pub,
                 command_duration,
                 ((1, 500), (2, 760), (3, 15), (4, 150), (5, 500), (10, 200)),
             )
-            rospy.sleep(max(command_duration, float(wait_seconds)))
+            if not self._interruptible_sleep(
+                total_wait,
+                label='safe arm settling',
+                enforce_mission_budget=not allow_stopped,
+                allow_stopped=allow_stopped,
+            ):
+                self.mechanical_arm_safe = False
+                return False
             self.mechanical_arm_safe = True
             return True
         except Exception as exc:
@@ -827,22 +1242,39 @@ class VoiceControlNavNode(MissionLifecycle):
         return pose
 
     def navigate_and_wait(self, x, y, yaw_degrees, timeout=None):
-        timeout = float(timeout or self.navigation_timeout)
+        if self.stop_requested or rospy.is_shutdown():
+            self.safe_stop_robot()
+            return False
+        requested_timeout = float(timeout or self.navigation_timeout)
+        timeout = self._bounded_timeout(requested_timeout)
+        if timeout <= 0.0:
+            rospy.logerr('navigation skipped because its deadline expired')
+            self.safe_stop_robot()
+            return False
+        navigation_deadline = time.monotonic() + timeout
         self.safe_stop_robot()
+        server_timeout = min(
+            self.move_base_server_timeout,
+            max(0.0, navigation_deadline - time.monotonic()),
+        )
+        if server_timeout <= 0.0:
+            return False
         if not self.move_base_client.wait_for_server(
-            rospy.Duration(self.move_base_server_timeout)
+            rospy.Duration(server_timeout)
         ):
             rospy.logerr('move_base action server is unavailable')
             return False
         goal = self.make_move_base_goal(x, y, yaw_degrees)
         self.move_base_client.send_goal(goal)
-        deadline = rospy.Time.now() + rospy.Duration(timeout)
-        while not rospy.is_shutdown() and rospy.Time.now() < deadline:
+        while not rospy.is_shutdown() and time.monotonic() < navigation_deadline:
             if self.stop_requested:
                 self.move_base_client.cancel_goal()
                 self.safe_stop_robot()
                 return False
-            if self.move_base_client.wait_for_result(rospy.Duration(0.2)):
+            wait_slice = min(0.2, max(0.0, navigation_deadline - time.monotonic()))
+            if wait_slice <= 0.0:
+                break
+            if self.move_base_client.wait_for_result(rospy.Duration(wait_slice)):
                 state = self.move_base_client.get_state()
                 if state == GoalStatus.SUCCEEDED:
                     self.safe_stop_robot()
@@ -855,8 +1287,9 @@ class VoiceControlNavNode(MissionLifecycle):
         rospy.logerr('navigation timed out after %.1f seconds', timeout)
         return False
 
-    def wait_nav_status(self, timeout=30.0):
-        start = rospy.Time.now()
+    def wait_nav_status(self, timeout=30.0, deadline=None):
+        timeout = self._bounded_timeout(timeout, deadline=deadline)
+        end_time = time.monotonic() + timeout
         while not rospy.is_shutdown() and not self.stop_requested:
             if self.move_base_status == 3:
                 self.move_base_status = 1
@@ -865,26 +1298,32 @@ class VoiceControlNavNode(MissionLifecycle):
                 self.move_base_status = 1
                 self.safe_stop_robot()
                 return False
-            if (rospy.Time.now() - start).to_sec() > timeout:
+            if time.monotonic() >= end_time:
                 self.move_base_status = 1
                 self.safe_stop_robot()
                 return False
-            rospy.sleep(0.1)
+            time.sleep(0.1)
         return False
 
-    def wait_correction_status(self, timeout=30.0):
-        start = rospy.Time.now()
+    def wait_correction_status(self, timeout=None, deadline=None):
+        requested = self.correction_status_timeout if timeout is None else timeout
+        timeout = self._bounded_timeout(requested, deadline=deadline)
+        end_time = time.monotonic() + timeout
         while not rospy.is_shutdown() and not self.stop_requested:
             if rospy.get_param('/position_correction/status', 'stop') == 'stop':
                 return True
-            if (rospy.Time.now() - start).to_sec() >= timeout:
+            if time.monotonic() >= end_time:
                 self.safe_stop_robot()
                 return False
-            rospy.sleep(0.2)
+            time.sleep(0.2)
         return False
 
-    def wait_ramp_status(self, timeout=30.0, require_active_transition=True):
-        start = rospy.Time.now()
+    def wait_ramp_status(
+        self, timeout=None, require_active_transition=True, deadline=None
+    ):
+        requested = self.ramp_alignment_timeout if timeout is None else timeout
+        timeout = self._bounded_timeout(requested, deadline=deadline)
+        end_time = time.monotonic() + timeout
         active_seen = not require_active_transition
         while not rospy.is_shutdown() and not self.stop_requested:
             status = rospy.get_param('/ramp/status', 'stop')
@@ -892,53 +1331,73 @@ class VoiceControlNavNode(MissionLifecycle):
                 active_seen = True
             elif active_seen:
                 return True
-            if (rospy.Time.now() - start).to_sec() >= timeout:
+            if time.monotonic() >= end_time:
                 self.safe_stop_robot()
                 return False
-            rospy.sleep(0.2)
+            time.sleep(0.2)
         return False
 
     def run_ramp_alignment(self):
         if self.stop_requested or rospy.is_shutdown():
             return False
-        start_response = self.call_trigger('/ramp/start', timeout=5.0)
+        deadline = self._make_local_deadline(self.ramp_alignment_timeout)
+        start_response = self.call_trigger(
+            '/ramp/start', timeout=5.0, deadline=deadline
+        )
         if start_response is None or not start_response.success:
             return False
         if self.stop_requested or rospy.is_shutdown():
-            self.call_trigger('/ramp/stop', timeout=2.0)
+            self.call_trigger(
+                '/ramp/stop', timeout=1.0, enforce_mission_budget=False
+            )
             return False
         try:
-            up_response = self.call_trigger('/ramp/up', timeout=5.0)
+            up_response = self.call_trigger(
+                '/ramp/up', timeout=5.0, deadline=deadline
+            )
             if up_response is None or not up_response.success:
                 return False
             if self.stop_requested or rospy.is_shutdown():
                 return False
-            return self.wait_ramp_status(require_active_transition=True)
+            return self.wait_ramp_status(
+                require_active_transition=True, deadline=deadline
+            )
         finally:
-            self.call_trigger('/ramp/stop', timeout=2.0)
+            self.call_trigger(
+                '/ramp/stop', timeout=1.0, enforce_mission_budget=False
+            )
 
-    def wait_pick_status(self, timeout=20.0):
-        start = rospy.Time.now()
+    def wait_pick_status(self, timeout=None, deadline=None):
+        requested = self.shape_pick_timeout if timeout is None else timeout
+        timeout = self._bounded_timeout(requested, deadline=deadline)
+        end_time = time.monotonic() + timeout
+        active_seen = False
         while not rospy.is_shutdown() and not self.stop_requested:
-            if rospy.get_param('/shape_recognition/status', 'start') == 'stop':
-                rospy.set_param('/shape_recognition/status', 'start')
+            status = rospy.get_param('/shape_recognition/status', 'start')
+            if status in ('start', 'active', 'pick'):
+                active_seen = True
+            elif status == 'stop' and active_seen:
                 return True
-            if (rospy.Time.now() - start).to_sec() >= timeout:
-                rospy.set_param('/shape_recognition/status', 'start')
+            elif status in ('timeout', 'error'):
                 self.safe_stop_robot()
                 return False
-            rospy.sleep(0.2)
+            if time.monotonic() >= end_time:
+                self.safe_stop_robot()
+                return False
+            time.sleep(0.2)
         return False
 
-    def wait_yolo_status(self, timeout=10.0):
-        start = rospy.Time.now()
+    def wait_yolo_status(self, timeout=None, deadline=None):
+        requested = self.yolo_detection_timeout if timeout is None else timeout
+        timeout = self._bounded_timeout(requested, deadline=deadline)
+        end_time = time.monotonic() + timeout
         while not rospy.is_shutdown() and not self.stop_requested:
             shape = rospy.get_param('/yolov5/shape', 'None')
             if shape != 'None':
                 return shape
-            if (rospy.Time.now() - start).to_sec() >= timeout:
+            if time.monotonic() >= end_time:
                 return None
-            rospy.sleep(0.2)
+            time.sleep(0.2)
         return None
 
     def reverse_up_ramp_with_laser(self, distance, speed, timeout):
@@ -951,8 +1410,11 @@ class VoiceControlNavNode(MissionLifecycle):
             pass
         start_x = self.current_pose.position.x
         start_y = self.current_pose.position.y
-        start_time = rospy.Time.now()
-        rate = rospy.Rate(20)
+        timeout = self._bounded_timeout(timeout)
+        if timeout <= 0.0:
+            self.safe_stop_robot()
+            return False
+        end_time = time.monotonic() + timeout
         traveled = 0.0
         try:
             while not rospy.is_shutdown() and not self.stop_requested:
@@ -961,7 +1423,7 @@ class VoiceControlNavNode(MissionLifecycle):
                 traveled = math.sqrt(dx * dx + dy * dy)
                 if traveled >= distance:
                     return True
-                if (rospy.Time.now() - start_time).to_sec() >= timeout:
+                if time.monotonic() >= end_time:
                     rospy.logerr(
                         'ramp return timed out at %.3f of %.3f metres', traveled, distance
                     )
@@ -971,7 +1433,7 @@ class VoiceControlNavNode(MissionLifecycle):
                 error = self.left_rear_dist - self.right_rear_dist
                 twist.angular.z = max(-0.5, min(0.5, 0.6 * error))
                 self.mecanum_pub.publish(twist)
-                rate.sleep()
+                time.sleep(0.05)
             return False
         finally:
             self.safe_stop_robot()
@@ -1064,24 +1526,42 @@ class VoiceControlNavNode(MissionLifecycle):
     ):
         if task_point_index not in (1, 2, 3):
             raise ValueError('task_point_index must be 1, 2, or 3')
+        session_id = uuid.uuid4().hex
+        session_deadline = self._make_local_deadline(self.moon_session_timeout)
+        reverse_cleanup_reserve = (
+            math.pi + 1.5 if rotate and reverse_rotate else 0.0
+        )
+        detector_deadline = session_deadline - reverse_cleanup_reserve
         self.safe_stop_robot()
-        if not self._unload_yolo_for_mission():
+        if not self._ensure_time_remaining(
+            'Moon scene session', minimum_seconds=0.1, deadline=detector_deadline
+        ):
             result = self._moon_failure_result(
                 task_point_index,
-                uuid.uuid4().hex,
+                session_id,
+                'timeout',
+                'mission or Moon-session deadline expired before detection',
+            )
+            self._store_moon_result(task_point_index, result)
+            return result
+        if not self._unload_yolo_for_mission(deadline=detector_deadline):
+            result = self._moon_failure_result(
+                task_point_index,
+                session_id,
                 'detector_unavailable',
                 'existing mineral-card YOLO could not release its GPU context',
             )
             self._store_moon_result(task_point_index, result)
             return result
-        if rotate and not self._drive_for(angular_z=-0.5, duration=math.pi):
+        if rotate and not self._drive_for(
+            angular_z=-0.5, duration=math.pi, deadline=detector_deadline
+        ):
             result = self._moon_failure_result(
-                task_point_index, uuid.uuid4().hex, 'stopped', 'rotation interrupted'
+                task_point_index, session_id, 'stopped', 'rotation interrupted'
             )
             self._store_moon_result(task_point_index, result)
             return result
 
-        session_id = uuid.uuid4().hex
         started_at_ros = rospy.Time.now().to_sec()
         request = {
             'task_point_index': task_point_index,
@@ -1095,7 +1575,9 @@ class VoiceControlNavNode(MissionLifecycle):
 
         result = None
         try:
-            reset_response = self.call_trigger('/moon_detector/reset', timeout=3.0)
+            reset_response = self.call_trigger(
+                '/moon_detector/reset', timeout=3.0, deadline=detector_deadline
+            )
             if reset_response is None or not reset_response.success:
                 result = self._moon_failure_result(
                     task_point_index, session_id, 'detector_unavailable', 'reset failed'
@@ -1105,7 +1587,9 @@ class VoiceControlNavNode(MissionLifecycle):
                 rospy.set_param('/moon_detector/request/session_id', session_id)
                 rospy.set_param('/moon_detector/request/started_at_ros', started_at_ros)
                 start_response = self.call_trigger(
-                    '/moon_detector/start', timeout=self.moon_start_timeout
+                    '/moon_detector/start',
+                    timeout=self.moon_start_timeout,
+                    deadline=detector_deadline,
                 )
                 if start_response is None or not start_response.success:
                     result = self._moon_failure_result(
@@ -1115,16 +1599,24 @@ class VoiceControlNavNode(MissionLifecycle):
                         start_response.message if start_response is not None else 'start failed',
                     )
                 else:
-                    deadline = rospy.Time.now() + rospy.Duration(
-                        self.moon_detection_timeout
+                    detection_timeout = self._bounded_timeout(
+                        self.moon_detection_timeout, deadline=detector_deadline
                     )
-                    rate = rospy.Rate(20)
-                    while not rospy.is_shutdown() and rospy.Time.now() < deadline:
+                    detection_deadline = time.monotonic() + detection_timeout
+                    while (
+                        not rospy.is_shutdown()
+                        and time.monotonic() < detection_deadline
+                    ):
                         if self.stop_requested:
                             break
                         if self._moon_result_event.is_set():
                             break
-                        rate.sleep()
+                        self._moon_result_event.wait(
+                            min(
+                                0.05,
+                                max(0.0, detection_deadline - time.monotonic()),
+                            )
+                        )
                     with self._moon_result_lock:
                         payload = self._current_moon_result
                     if payload is None:
@@ -1139,7 +1631,7 @@ class VoiceControlNavNode(MissionLifecycle):
                             task_point_index, session_id, payload
                         )
         finally:
-            self.stop_moon_detector()
+            self.stop_moon_detector(enforce_mission_budget=False)
             with self._moon_result_lock:
                 self._current_moon_request = None
                 self._current_moon_result = None
@@ -1150,8 +1642,12 @@ class VoiceControlNavNode(MissionLifecycle):
                 and not self.stop_requested
                 and not rospy.is_shutdown()
             ):
-                self._drive_for(angular_z=0.5, duration=math.pi)
-            self._restart_yolo()
+                self._drive_for(
+                    angular_z=0.5,
+                    duration=math.pi,
+                    deadline=session_deadline,
+                )
+            self._restart_yolo(deadline=session_deadline)
             self.safe_stop_robot()
 
         if result is None:
@@ -1166,47 +1662,112 @@ class VoiceControlNavNode(MissionLifecycle):
         rospy.set_param('/moon_task/results/%d' % task_point_index, stored)
         self.save_mission_results()
 
-    def stop_moon_detector(self):
-        self.call_trigger('/moon_detector/stop', timeout=1.0)
+    def stop_moon_detector(self, enforce_mission_budget=True):
+        self.call_trigger(
+            '/moon_detector/stop',
+            timeout=1.0,
+            enforce_mission_budget=enforce_mission_budget,
+        )
 
-    def unload_moon_detector(self):
+    def unload_moon_detector(self, deadline=None, enforce_mission_budget=True):
         response = self.call_trigger(
-            '/moon_detector/unload', timeout=self.moon_unload_timeout
+            '/moon_detector/unload',
+            timeout=self.moon_unload_timeout,
+            deadline=deadline,
+            enforce_mission_budget=enforce_mission_budget,
         )
         return response is not None and response.success
 
-    def safe_pick(self):
-        self.call_trigger('/yolov5/stop', timeout=2.0)
+    def _prepare_shape_pick(self, deadline=None):
+        self.safe_stop_robot()
+        if self._shape_pick_prepared:
+            return True
+        if not self._yolo_unloaded_for_mission:
+            self.call_trigger('/yolov5/stop', timeout=2.0, deadline=deadline)
         try:
-            rospy.set_param('/shape_recognition/status', 'start')
-            start_response = self.call_trigger('/shape_recognition/start', timeout=5.0)
+            start_response = self.call_trigger(
+                '/shape_recognition/start',
+                timeout=self.shape_start_timeout,
+                deadline=deadline,
+            )
             if start_response is None or not start_response.success:
+                self.call_trigger(
+                    '/shape_recognition/stop',
+                    timeout=self.shape_stop_timeout,
+                    enforce_mission_budget=False,
+                )
+                self._restart_yolo(deadline=deadline)
                 return False
-            rospy.sleep(1.5)
-            pick_response = self.call_trigger('/shape_recognition/pick', timeout=5.0)
-            if pick_response is None or not pick_response.success:
-                return False
-            rospy.sleep(1.0)
-            success = self.wait_pick_status(timeout=20.0)
-            stop_response = self.call_trigger('/shape_recognition/stop', timeout=2.0)
-            if stop_response is None or not stop_response.success:
-                return False
-            rospy.set_param('/shape_recognition/status', 'start')
-            rospy.sleep(0.5)
-            return success
+            self._shape_pick_prepared = True
+            return True
+        except Exception as exc:
+            rospy.logerr('shape-recognition prewarm failed: %s', exc)
+            self.safe_stop_robot()
+            self.call_trigger(
+                '/shape_recognition/stop',
+                timeout=self.shape_stop_timeout,
+                enforce_mission_budget=False,
+            )
+            self._restart_yolo(deadline=deadline)
+            return False
+
+    def _finish_shape_pick(self, deadline=None):
+        stop_response = self.call_trigger(
+            '/shape_recognition/stop',
+            timeout=self.shape_stop_timeout,
+            enforce_mission_budget=False,
+        )
+        self._shape_pick_prepared = False
+        self._restart_yolo(deadline=deadline)
+        return stop_response is not None and stop_response.success
+
+    def safe_pick(self, prepared=False, deadline=None):
+        pick_deadline = self._make_local_deadline(
+            self.shape_pick_stage_timeout, parent_deadline=deadline
+        )
+        prepared_here = False
+        success = False
+        cleanup_succeeded = True
+        try:
+            if prepared:
+                if not self._shape_pick_prepared:
+                    rospy.logerr('prepared pick requested without an active prewarm session')
+                    success = False
+                else:
+                    success = True
+            else:
+                if not self._prepare_shape_pick(deadline=pick_deadline):
+                    success = False
+                else:
+                    prepared_here = True
+                    success = self._interruptible_sleep(
+                        self.shape_warmup_seconds,
+                        label='shape-recognition warmup',
+                        deadline=pick_deadline,
+                    )
+            if success:
+                self.safe_stop_robot()
+                pick_response = self.call_trigger(
+                    '/shape_recognition/pick',
+                    timeout=self.shape_pick_service_timeout,
+                    deadline=pick_deadline,
+                )
+                if pick_response is not None and pick_response.success:
+                    success = self.wait_pick_status(
+                        timeout=self.shape_pick_timeout, deadline=pick_deadline
+                    )
+                else:
+                    success = False
         except Exception as exc:
             rospy.logerr('pick task failed: %s', exc)
             self.safe_stop_robot()
-            return False
+            success = False
         finally:
-            self.call_trigger('/shape_recognition/stop', timeout=1.0)
-            try:
-                rospy.set_param('/shape_recognition/status', 'start')
-            except Exception:
-                pass
-            self._restart_yolo()
+            if prepared_here or prepared or self._shape_pick_prepared:
+                cleanup_succeeded = self._finish_shape_pick(deadline=pick_deadline)
+        return success and cleanup_succeeded
 
-    def _restart_yolo(self):
+    def _restart_yolo(self, deadline=None):
         with self._gpu_lifecycle_lock:
             if (
                 self._yolo_unloaded_for_mission
@@ -1216,16 +1777,20 @@ class VoiceControlNavNode(MissionLifecycle):
             ):
                 return False
             response = self.call_trigger(
-                '/yolov5/start', timeout=self.yolo_start_timeout
+                '/yolov5/start',
+                timeout=self.yolo_start_timeout,
+                deadline=deadline,
             )
             return response is not None and response.success
 
-    def _unload_yolo_for_mission(self):
+    def _unload_yolo_for_mission(self, deadline=None):
         with self._gpu_lifecycle_lock:
             if self._yolo_unloaded_for_mission:
                 return True
             response = self.call_trigger(
-                '/yolov5/unload', timeout=self.yolo_unload_timeout
+                '/yolov5/unload',
+                timeout=self.yolo_unload_timeout,
+                deadline=deadline,
             )
             if response is None or not response.success:
                 return False
@@ -1240,12 +1805,25 @@ class VoiceControlNavNode(MissionLifecycle):
                 return False
 
         if set_status == 'pick1':
-            if not self.navigate_and_wait(1.30, -3.12, 0.0):
+            if not self.navigate_and_wait(
+                1.30, -3.12, 0.0, timeout=self.pick_navigation_timeout
+            ):
                 return False
-            if not self._drive_for(linear_x=0.108, duration=2.0):
+            pick_deadline = self._make_local_deadline(
+                self.shape_pick_stage_timeout
+            )
+            if not self._prepare_shape_pick(deadline=pick_deadline):
                 return False
-            if not self.safe_pick():
-                return False
+            try:
+                if not self._drive_for(
+                    linear_x=0.108, duration=2.0, deadline=pick_deadline
+                ):
+                    return False
+                if not self.safe_pick(prepared=True, deadline=pick_deadline):
+                    return False
+            finally:
+                if self._shape_pick_prepared:
+                    self._finish_shape_pick(deadline=pick_deadline)
             self.play('7')
             if not self._drive_for(linear_x=-0.05, duration=1.0):
                 return False
@@ -1272,10 +1850,21 @@ class VoiceControlNavNode(MissionLifecycle):
                     navigation_yaw = current_yaw
             if not self.navigate_and_wait(0.94, -3.17, navigation_yaw):
                 return False
-            if not self._drive_for(linear_x=0.24, duration=2.0):
+            pick_deadline = self._make_local_deadline(
+                self.shape_pick_stage_timeout
+            )
+            if not self._prepare_shape_pick(deadline=pick_deadline):
                 return False
-            if not self.safe_pick():
-                return False
+            try:
+                if not self._drive_for(
+                    linear_x=0.24, duration=2.0, deadline=pick_deadline
+                ):
+                    return False
+                if not self.safe_pick(prepared=True, deadline=pick_deadline):
+                    return False
+            finally:
+                if self._shape_pick_prepared:
+                    self._finish_shape_pick(deadline=pick_deadline)
             self.play('7')
             self.detect_moon_scene_at_task_point(3)
             return self._drive_for(linear_x=-0.2, duration=3.0)
@@ -1290,16 +1879,16 @@ class VoiceControlNavNode(MissionLifecycle):
             if response is None or not response.success:
                 self.safe_stop_robot()
                 return False
-            rospy.sleep(1.0)
-            if not self.wait_correction_status():
-                return False
+            # place_3 is synchronous: its response arrives after the arm has released
+            # the object and returned, so a shared stale status parameter is not waited.
             self.play('9')
             return self._drive_for(linear_x=-0.2, duration=2.0)
 
         if set_status == 'detect':
             self.play('reached_explosion-proof_warehouse' if not self.slope_surface else '2')
-            rospy.sleep(1.0)
-            shape = self.wait_yolo_status(timeout=10.0)
+            if not self._interruptible_sleep(1.0, label='mineral detector settling'):
+                return False
+            shape = self.wait_yolo_status(timeout=self.yolo_detection_timeout)
             if shape is None:
                 rospy.logerr('shape detection timed out; refusing to invent a mineral class')
                 return False
@@ -1318,8 +1907,9 @@ class VoiceControlNavNode(MissionLifecycle):
             self.detect_moon_scene_at_task_point(
                 1, rotate=True, reverse_rotate=False
             )
-            rospy.sleep(2.0)
-            return True
+            return self._interruptible_sleep(
+                2.0, label='post-detection camera settling'
+            )
 
         if set_status == 'back':
             rospy.set_param('~status', 'stop')
@@ -1359,6 +1949,7 @@ class VoiceControlNavNode(MissionLifecycle):
                 self.ramp_approach_pose['x'],
                 self.ramp_approach_pose['y'],
                 self.ramp_approach_pose['yaw'],
+                timeout=min(self.navigation_timeout, 30.0),
             ):
                 return False
             if self.use_ramp_alignment_service and not self.run_ramp_alignment():
@@ -1398,7 +1989,10 @@ class VoiceControlNavNode(MissionLifecycle):
             return False
         self.save_mission_results()
         if not self.navigate_and_wait(
-            self.base_pose['x'], self.base_pose['y'], self.base_pose['yaw']
+            self.base_pose['x'],
+            self.base_pose['y'],
+            self.base_pose['yaw'],
+            timeout=self.return_navigation_timeout,
         ):
             return False
         if not self.safe_arm_pose(wait_seconds=1.0):
@@ -1413,6 +2007,9 @@ class VoiceControlNavNode(MissionLifecycle):
     def announce_all_task_results_at_base(self):
         if not self.begin_announcing():
             return False
+        announcement_deadline = self._make_local_deadline(
+            self.announcement_stage_timeout, reserve_seconds=0.0
+        )
         self.safe_stop_robot()
         playback_succeeded = True
         for task_point_index in (1, 2, 3):
@@ -1429,11 +2026,14 @@ class VoiceControlNavNode(MissionLifecycle):
                         class_name_cn,
                     )
                     prefix_ok = self.play_moon_asset(
-                        'point_%d_prefix' % task_point_index
+                        'point_%d_prefix' % task_point_index,
+                        deadline=announcement_deadline,
                     )
                     if self.stop_requested or rospy.is_shutdown():
                         return False
-                    class_ok = self.play_moon_asset('class_' + class_name_en)
+                    class_ok = self.play_moon_asset(
+                        'class_' + class_name_en, deadline=announcement_deadline
+                    )
                     playback_succeeded = prefix_ok and class_ok and playback_succeeded
                     if self.stop_requested or rospy.is_shutdown():
                         return False
@@ -1443,7 +2043,10 @@ class VoiceControlNavNode(MissionLifecycle):
                 TASK_POINT_NAME[task_point_index],
             )
             playback_succeeded = (
-                self.play_moon_asset('point_%d_failure' % task_point_index)
+                self.play_moon_asset(
+                    'point_%d_failure' % task_point_index,
+                    deadline=announcement_deadline,
+                )
                 and playback_succeeded
             )
             if self.stop_requested or rospy.is_shutdown():
@@ -1455,38 +2058,69 @@ class VoiceControlNavNode(MissionLifecycle):
             return False
         self.save_mission_results()
         # The 2026 rules separately require this exact base-completion phrase.
-        return self.play('mission_completed')
+        return self.play('mission_completed', deadline=announcement_deadline)
+
+    def _run_initial_departure(self):
+        if not self._restart_yolo():
+            return False
+        self.play('1')
+        if not self._drive_for(linear_x=0.3, duration=3.0):
+            return False
+        return self._drive_for(angular_z=-0.5, duration=3.0)
 
     def run_mission_once(self):
         try:
             if not self.mark_running():
                 return
             self.save_mission_results()
-            if not self._restart_yolo():
-                raise MissionAbort('existing mineral-card YOLO failed to start')
-            self.play('1')
-            if not self._drive_for(linear_x=0.3, duration=3.0):
-                raise MissionAbort('initial forward motion interrupted')
-            if not self._drive_for(angular_z=-0.5, duration=3.0):
-                raise MissionAbort('initial rotation interrupted')
+            if not self._run_timed_stage(
+                'initial departure',
+                self.initial_stage_timeout,
+                self._run_initial_departure,
+            ):
+                raise MissionAbort('initial departure timed out or failed')
 
-            if not self.control(1.5, -0.15, 90.0, 'detect'):
+            if not self._run_timed_stage(
+                'resource-library detection',
+                self.detect_stage_timeout,
+                lambda: self.control(1.5, -0.15, 90.0, 'detect'),
+            ):
                 raise MissionAbort('resource-library detect stage failed')
-            if not self.control(0.94, -3.124, 0.0, 'pick1'):
+            if not self._run_timed_stage(
+                'first pickup',
+                self.pick_stage_timeout,
+                lambda: self.control(0.94, -3.124, 0.0, 'pick1'),
+            ):
                 raise MissionAbort('first pick stage failed')
             self.completed_pick_tasks = 1
-            if not self.control(1.24, -0.22, 40.0, 'place'):
+            if not self._run_timed_stage(
+                'first placement',
+                self.place_stage_timeout,
+                lambda: self.control(1.24, -0.22, 40.0, 'place'),
+            ):
                 raise MissionAbort('first place stage failed')
             self.completed_place_tasks = 1
-            if not self.control(0.94, -3.124, -180.0, 'pick2'):
+            if not self._run_timed_stage(
+                'second pickup',
+                self.pick_stage_timeout,
+                lambda: self.control(0.94, -3.124, -180.0, 'pick2'),
+            ):
                 raise MissionAbort('second pick stage failed')
             self.completed_pick_tasks = 2
-            if not self.control(1.24, -0.22, 40.0, 'place'):
+            if not self._run_timed_stage(
+                'second placement',
+                self.place_stage_timeout,
+                lambda: self.control(1.24, -0.22, 40.0, 'place'),
+            ):
                 raise MissionAbort('second place stage failed')
             self.completed_place_tasks = 2
             self.navigation_tasks_finished = True
 
-            if not self._prepare_remaining_tasks():
+            if not self._run_timed_stage(
+                'post-recognition tasks',
+                self.remaining_tasks_timeout,
+                self._prepare_remaining_tasks,
+            ):
                 raise MissionAbort('post-recognition competition tasks failed')
             if not self._body_tasks_complete():
                 raise MissionAbort('competition body-task completion flags are incomplete')
@@ -1496,9 +2130,19 @@ class VoiceControlNavNode(MissionLifecycle):
 
             if not self.can_begin_return(ros_shutdown=rospy.is_shutdown()):
                 raise MissionAbort('return gate rejected the mission state')
-            if not self.begin_return_to_base():
+            if not self._run_timed_stage(
+                'return to base',
+                self.return_stage_timeout,
+                self.begin_return_to_base,
+                reserve_seconds=self.announcement_reserve_seconds,
+            ):
                 raise MissionAbort('return to base failed')
-            if not self.announce_all_task_results_at_base():
+            if not self._run_timed_stage(
+                'announce results',
+                self.announcement_stage_timeout,
+                self.announce_all_task_results_at_base,
+                reserve_seconds=0.0,
+            ):
                 raise MissionAbort('base result announcement failed')
             if not self.mark_completed():
                 raise MissionAbort('failed to enter COMPLETED state')
@@ -1530,6 +2174,8 @@ class VoiceControlNavNode(MissionLifecycle):
                 'ramp_task_finished': self.ramp_task_finished,
                 'other_competition_tasks_finished': self.other_competition_tasks_finished,
                 'mechanical_arm_safe': self.mechanical_arm_safe,
+                'time_budget': self.mission_budget.snapshot(),
+                'active_stage': self._active_stage_name,
                 'updated_at': utc_timestamp(),
             }
         )

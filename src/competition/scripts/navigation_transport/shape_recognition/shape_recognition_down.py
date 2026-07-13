@@ -78,6 +78,7 @@ class RgbDepthImageNode:
         self.operation_cancelled = True
         self.move_thread = None
         self.goto_thread = None
+        self.ready = False
         offset = rospy.get_param('/offset') #识别的类别
         self.shape_dist = rospy.get_param('/shape_dist') #识别的类别
         self.offset_x = offset[0]
@@ -86,7 +87,7 @@ class RgbDepthImageNode:
 
         self.target_shape = "None" #目标形状
         self.queue = queue.Queue(maxsize=1) #图像队列
-        rospy.set_param('~status', 'start') #设置目前节点状态
+        rospy.set_param('~status', 'stop') #设置目前节点状态
         self.hand2cam_tf_matrix = [[0.0,0.0,1.0,-0.105],
                                    [-1.0,0.0,0.0,0.0],
                                    [0.0,-1.0,0.0,0.044],
@@ -97,18 +98,27 @@ class RgbDepthImageNode:
         rospy.sleep(3)
         #初始化目标形状参数，方便设置
         rospy.set_param('~target_shape', 'box')
-        rospy.Service('~pick', Trigger, self.pick_callback) #进行夹取
-        rospy.Service('~calibration_flat', Trigger, self.calibration_flat_callback) #进行夹取
-        rospy.Service('~calibration_dist', Trigger, self.calibration_dist_callback) #进行夹取
-        rospy.Service('~stop', Trigger, self.stop_callback) #停止节点
-        rospy.Service('~start', Trigger, self.start_callback) #启动形状识别
-        rospy.Service('~colse', Trigger, self.colse_callback) #关闭节点
-        rospy.Service('~close', Trigger, self.colse_callback)
         rospy.sleep(2)
         # rospy.wait_for_service('/robot_1/gemini_camera/set_ldp') #等待相机ldp服务
-        rospy.wait_for_service('/gemini_camera/set_ldp') #等待相机ldp服务
-        # rospy.ServiceProxy('/robot_1/gemini_camera/set_ldp', SetBool)(False) #关闭相机ldp服务器，近距离也能进行识别
-        rospy.ServiceProxy('/gemini_camera/set_ldp', SetBool)(False) #关闭相机ldp服务器，近距离也能进行识别
+        try:
+            rospy.wait_for_service('/gemini_camera/set_ldp', timeout=3.0)
+            ldp_complete = threading.Event()
+
+            def disable_ldp():
+                try:
+                    rospy.ServiceProxy('/gemini_camera/set_ldp', SetBool)(False)
+                except Exception as exc:
+                    rospy.logwarn('failed to disable Gemini LDP: %s', exc)
+                finally:
+                    ldp_complete.set()
+
+            ldp_thread = threading.Thread(target=disable_ldp, name='disable-gemini-ldp')
+            ldp_thread.daemon = True
+            ldp_thread.start()
+            if not ldp_complete.wait(2.0):
+                rospy.logwarn('timed out while disabling Gemini LDP')
+        except Exception as exc:
+            rospy.logwarn('Gemini LDP service unavailable during startup: %s', exc)
         #由于相机是斜着看地面的，使用线性回归校准数据成平面
         self.line_compensation = LinearRegression()
         #此处参数皆为测试所得
@@ -120,15 +130,28 @@ class RgbDepthImageNode:
         # 由于相机只是再y轴翻转，使用这里只需要校准y轴 
         for i in range(399):
             self.line_depth_compensation.append(self.line_compensation.predict([[i]]))
+        self.ready = True
+        rospy.Service('~pick', Trigger, self.pick_callback) #进行夹取
+        rospy.Service('~calibration_flat', Trigger, self.calibration_flat_callback) #进行夹取
+        rospy.Service('~calibration_dist', Trigger, self.calibration_dist_callback) #进行夹取
+        rospy.Service('~stop', Trigger, self.stop_callback) #停止节点
+        rospy.Service('~start', Trigger, self.start_callback) #启动形状识别
+        rospy.Service('~colse', Trigger, self.colse_callback) #关闭节点
+        rospy.Service('~close', Trigger, self.colse_callback)
 
 
 
     #启动形状识别
     def start_callback(self,msg):
+        if not self.ready:
+            return TriggerResponse(success=False, message='shape node is not ready')
         self.stop_callback(msg)
         self.close = False
         with self.operation_lock:
             self.operation_cancelled = False
+            self.count = 0
+            self.last_shape = 'none'
+            self.shape = None
         if self.goto_thread is None or not self.goto_thread.is_alive():
             self.goto_thread = threading.Thread(target=self.goto_default, args=())
             self.goto_thread.daemon = True
@@ -151,6 +174,9 @@ class RgbDepthImageNode:
             self.operation_cancelled = True
             self.pick_state = False
             self.moving = False
+            self.count = 0
+            self.last_shape = 'none'
+            self.shape = None
             move_thread = self.move_thread
         for attribute_name in ('rgb_sub', 'depth_sub', 'info_sub'):
             subscriber = getattr(self, attribute_name)
@@ -181,11 +207,18 @@ class RgbDepthImageNode:
     #进行夹取
     def pick_callback(self,msg):
         with self.operation_lock:
+            if not self.ready or self.rgb_sub is None:
+                return TriggerResponse(
+                    success=False, message='shape recognition was not started'
+                )
             self.operation_generation += 1
             generation = self.operation_generation
             self.operation_cancelled = False
             self.pick_state = False
             self.moving = False
+            self.count = 0
+            self.last_shape = 'none'
+            self.shape = None
         #设置目标形状
         self.target_shape = rospy.get_param('/shape_recognition/target_shape',"box")
         #进入机械臂进入夹取状态
@@ -386,9 +419,6 @@ class RgbDepthImageNode:
                     y_depth  =  np.where(y_contour_depth == 0, np.nan, y_contour_depth) # 计算这行数据中有效数据的标准差
                     x_depth_std = np.nanstd(x_depth)
                     y_depth_std = np.nanstd(y_depth)
-                    print(w,h)
-                    print(abs(w/h),abs(h/w))
-                    print(x_depth_std,y_depth_std, CornerNum)
                     # print(x_depth_std - y_depth_std)
                     if x_depth_std <= 0.9 and y_depth_std <= 1.15 and CornerNum == 4: 
                         objType="cuboid_1" # 立方体/长方体
@@ -421,7 +451,6 @@ class RgbDepthImageNode:
                                     objType="cylinder_4" # 圆柱体
                                     self.shape = 'cylinder'
                     shape=objType
-                    print(shape)
                     contour = obj
                     if 'cubo' in objType:
                         # 判断是正方体还是长方体
@@ -444,14 +473,12 @@ class RgbDepthImageNode:
                     # cv2.rectangle(depth_color_map, (x, y), (x + w, y + h), (255, 255, 255), 2)
                     # cv2.putText(depth_color_map, objType[:-2], (x + w // 2, y + (h //2) - 10), cv2.FONT_HERSHEY_COMPLEX, 1.0, (0, 0, 0), 2, cv2.LINE_AA)
                     # cv2.putText(depth_color_map, objType[:-2], (x + w // 2, y + (h //2) - 10), cv2.FONT_HERSHEY_COMPLEX, 1.0, (255, 255, 255), 1)
-                    print(self.shape)
                     if self.shape == rospy.get_param('/shape_recognition/target_shape',"box"):
                         break
                     else:
                         self.shape = "None"
                 # print(self.shape,self.target_shape)
                 if self.last_shape == shape and shape != 'None'and self.shape == self.target_shape:
-                    print(self.count)
                     self.count += 1
                     self.shape = 'None'
                 # else:
@@ -463,7 +490,6 @@ class RgbDepthImageNode:
                         if angle < -45:
                             angle += 90
                         if width > height and width / height > 1.5:
-                            print("wh: ", width, height)
                             angle = angle + 90
                         # cv2.drawContours(depth_color_map, [np.int0(cv2.boxPoints((center, (width,height), angle)))], -1, (0, 0, 255), 2, cv2.LINE_AA)
                     if self.count > 3:
@@ -477,7 +503,6 @@ class RgbDepthImageNode:
                         pose_t, pose_r = mat_to_xyz_euler(world_pose)
                         # print(pose_t[2])
                         min_x, min_y = cx, cy
-                        print(pose_t)
                         # angle = 0
                         pose_t[0] += self.offset_x
                         pose_t[1] += self.offset_y

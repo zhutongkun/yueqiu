@@ -50,6 +50,117 @@ def atomic_write_json(path, payload):
     return destination
 
 
+class MissionTimeBudget(object):
+    """Monotonic hard deadline with explicit return and announcement reserves."""
+
+    def __init__(
+        self,
+        total_seconds=450.0,
+        return_reserve_seconds=60.0,
+        announcement_reserve_seconds=20.0,
+        clock=None,
+    ):
+        self.total_seconds = float(total_seconds)
+        self.return_reserve_seconds = float(return_reserve_seconds)
+        self.announcement_reserve_seconds = float(announcement_reserve_seconds)
+        if self.total_seconds <= 0.0:
+            raise ValueError("total_seconds must be positive")
+        if self.return_reserve_seconds < 0.0:
+            raise ValueError("return_reserve_seconds cannot be negative")
+        if self.announcement_reserve_seconds < 0.0:
+            raise ValueError("announcement_reserve_seconds cannot be negative")
+        if self.return_reserve_seconds >= self.total_seconds:
+            raise ValueError("return reserve must be smaller than the total budget")
+        if self.announcement_reserve_seconds >= self.return_reserve_seconds:
+            raise ValueError("announcement reserve must be smaller than return reserve")
+        self._clock = clock or time.monotonic
+        self.started_at = None
+        self.deadline = None
+
+    def _now(self, now=None):
+        return float(self._clock() if now is None else now)
+
+    def start(self, now=None):
+        self.started_at = self._now(now)
+        self.deadline = self.started_at + self.total_seconds
+        return self.deadline
+
+    def reset(self):
+        self.started_at = None
+        self.deadline = None
+
+    @property
+    def active(self):
+        return self.deadline is not None
+
+    def elapsed(self, now=None):
+        if not self.active:
+            return 0.0
+        return max(0.0, self._now(now) - self.started_at)
+
+    def remaining(self, reserve_seconds=0.0, now=None):
+        if not self.active:
+            return float("inf")
+        reserve = max(0.0, float(reserve_seconds))
+        return max(0.0, self.deadline - self._now(now) - reserve)
+
+    def bounded_timeout(
+        self,
+        requested_seconds,
+        reserve_seconds=0.0,
+        stage_deadline=None,
+        now=None,
+    ):
+        current = self._now(now)
+        allowed = max(0.0, float(requested_seconds))
+        allowed = min(allowed, self.remaining(reserve_seconds, now=current))
+        if stage_deadline is not None:
+            allowed = min(allowed, max(0.0, float(stage_deadline) - current))
+        return max(0.0, allowed)
+
+    def make_stage_deadline(
+        self,
+        requested_seconds,
+        reserve_seconds=0.0,
+        parent_deadline=None,
+        now=None,
+    ):
+        current = self._now(now)
+        allowed = self.bounded_timeout(
+            requested_seconds,
+            reserve_seconds=reserve_seconds,
+            stage_deadline=parent_deadline,
+            now=current,
+        )
+        return current + allowed
+
+    def snapshot(self, now=None):
+        if not self.active:
+            return {
+                "active": False,
+                "total_seconds": self.total_seconds,
+                "elapsed_seconds": 0.0,
+                "remaining_seconds": self.total_seconds,
+                "body_remaining_seconds": (
+                    self.total_seconds - self.return_reserve_seconds
+                ),
+                "return_reserve_seconds": self.return_reserve_seconds,
+                "announcement_reserve_seconds": self.announcement_reserve_seconds,
+            }
+        current = self._now(now)
+        return {
+            "active": True,
+            "total_seconds": self.total_seconds,
+            "elapsed_seconds": self.elapsed(now=current),
+            "remaining_seconds": self.remaining(now=current),
+            "body_remaining_seconds": self.remaining(
+                reserve_seconds=self.return_reserve_seconds, now=current
+            ),
+            "return_reserve_seconds": self.return_reserve_seconds,
+            "announcement_reserve_seconds": self.announcement_reserve_seconds,
+        }
+
+
 class MissionLifecycle(object):
     """Thread-safe, single-run lifecycle for one competition node process."""
 

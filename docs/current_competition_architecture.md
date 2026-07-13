@@ -98,7 +98,61 @@ flowchart TD
 
 第三次识别函数只能保存第三个结果并令 `three_scene_recognitions_finished=true`。它不得设置 `all_competition_tasks_finished`，也不得调用返航、播报或完成函数。
 
-## 6. 本分支状态与职责边界
+## 6. 八分钟时间预算与夹取形状识别时序
+
+### 6.1 分层截止
+
+第一个合法启动请求在持有启动锁时调用 `mission_budget.start()`，以 `time.monotonic()` 建立不可回拨的 450 秒硬截止。节点初始化和等待首次语音/15 秒自动启动不计入该 450 秒；一旦启动令牌被消费，后续语音、Timer 和服务不能重置或延长截止时间。
+
+```text
+任务启动 t=0                         最迟主体截止      最迟返航截止       比赛动作硬截止
+|---------------- 主体任务最多 390 秒 ----------------|---- 返航最多 40 秒 ----|-- 播报最多 20 秒 --|
+0                                                   390                    430                 450
+```
+
+`STARTING/RUNNING` 的所有预算化调用默认保留 60 秒，所以主体任务只能使用前 390 秒。`RETURNING_TO_BASE` 默认保留 20 秒，所以返航只能使用接下来的最多 40 秒。`ANNOUNCING_RESULTS` 不再扣留预留，但仍受 450 秒全局硬截止和 20 秒播报阶段上限约束。若主体预算耗尽，当前步骤失败并进入统一停车/清理/`ERROR` 路径；返航门禁不会因为超时而绕过未完成的夹取、放置或坡面任务。
+
+主状态机的聚合阶段上限如下；局部调用还会取所属阶段剩余时间与全局剩余时间的较小值：
+
+| `run_mission_once` 阶段 | 配置项 | 上限 |
+| --- | --- | ---: |
+| initial departure | `initial_stage_timeout` | 20 秒 |
+| resource-library detection | `detect_stage_timeout` | 50 秒 |
+| first/second pickup | `pick_stage_timeout` | 每次 85 秒 |
+| first/second placement | `place_stage_timeout` | 每次 45 秒 |
+| post-recognition tasks | `remaining_tasks_timeout` | 60 秒 |
+| return to base | `return_stage_timeout` | 40 秒 |
+| announce results | `announcement_stage_timeout` | 20 秒 |
+
+七个主体阶段上限合计为 `20 + 50 + 85 + 45 + 85 + 45 + 60 = 390` 秒。每一阶段仍使用同一个绝对主体截止，前一阶段节省的时间可供后续阶段使用，但任何后续阶段都不能把绝对截止向后延长。
+
+内部截止包括：服务发现 2 秒；普通导航 35 秒、夹取点导航 20 秒、返航导航 40 秒、`move_base` 服务端等待 10 秒；Moon 会话 25 秒（启动 12 秒、检测 12 秒、卸载 5 秒）；形状夹取整段 25 秒（启动 3 秒、预热 0.5 秒、`pick` 服务 4 秒、状态等待 18 秒、停止 1 秒）；平台状态 15 秒、放置服务 8 秒；原 YOLO 检测/启动/卸载 8/12/5 秒；坡面穿越 15 秒、可选坡面对齐 20 秒；每段音频 4 秒。迟到的异步服务响应若可能重新启动执行器，控制器会尝试调用对应 `stop` 服务中和它，防止已经超时的夹取或放置在后续阶段突然继续动作。
+
+450 秒是比赛动作截止，不是强行杀死进程的时刻。统一安全清理仍允许短暂调用视觉、对齐和坡面节点的 `stop/unload`，这些调用分别有 1–5 秒截止，避免为了守时而跳过停车和资源释放。450 到 480 秒的 30 秒系统余量专用于这类清理、ROS 调度和设备抖动，不得重新分配给主体任务；目标 Jetson 必须实测从启动请求接受到最终零速度/清理完成的墙钟时间。
+
+### 6.2 夹取形状识别的真实时序
+
+`/shape_recognition/*` 是采集平台夹取视觉，不是 Moon 十分类场景卡片识别。`pick1` 和 `pick2` 现在采用相同的预热时序：
+
+```mermaid
+sequenceDiagram
+    participant Main as voice_control_navigation.py
+    participant Chassis as /controller/cmd_vel
+    participant Shape as /shape_recognition
+    Main->>Chassis: 到达夹取导航点后发布零速度
+    Main->>Shape: /start（订阅相机并预热）
+    Main->>Chassis: 最后一段靠近采集平台
+    Main->>Chassis: 再次发布零速度
+    Main->>Shape: /pick（只在停车后触发）
+    Main->>Shape: bounded wait for status
+    Main->>Shape: /stop（finally 清理）
+```
+
+这样做使相机订阅、模型上下文和首帧在最后靠近期间提前准备，但不会让机械臂在底盘仍运动时执行夹取。`safe_pick(prepared=True)` 仍在调用 `/shape_recognition/pick` 前执行 `safe_stop_robot()`；失败、超时和异常也通过 `finally` 停止形状识别。
+
+用户提供的旧日志显示的是两个连续任务，而不是放置内部启动识别：`1783931844.773 start place_3` 是第一次放置；`1783931853.640` 已开始导航至 `pick2`；`1783931879.450 GOAL Reached` 后，`1783931881.680 === safe_pick start ===` 才进入第二次夹取。旧版本把 `/shape_recognition/start` 留在 `safe_pick` 内，因此视觉启动看起来偏晚；本分支把它前移到第二次夹取点、最后靠近动作之前。`1783931911.980 pick2: 执行第三次环境识别` 则是夹取尝试结束后的 Moon 任务点 3，和 `/shape_recognition/pick` 不是同一个识别系统。
+
+## 7. 本分支状态与职责边界
 
 本分支将生命周期拆分为：
 
@@ -116,7 +170,7 @@ flowchart TD
 
 `moon_detector.py` 只加载模型、订阅图像、过滤检测框、多帧投票并发布单次会话结果。主程序负责生成和校验 `session_id`、保存三个槽位、写 ROS 参数和 JSON、继续原流程、返航及离线播报。
 
-## 7. 基线缺口与实机确认项
+## 8. 基线缺口与实机确认项
 
 - 基线 15 秒逻辑不是一次性 Timer，且完整任务运行在持续外层循环内，语音启动后会被超时路径再次启动；根因见 `docs/mission_duplicate_start_root_cause.md`。
 - 基线在三个插入点调用过占位播报，违反“识别点只保存、不现场播报”。本分支必须移除这些调用。
@@ -124,7 +178,7 @@ flowchart TD
 - 基线返坡动作完成后没有独立的、可静态证明的“基地目标 ID + 到达确认 + 停车 + 集中播报”闭环。基地坐标、坡顶终点是否等同停车位，以及 move_base 与坡面动作的交接必须在目标小车验证。
 - `/position_correction/close` 与 `/shape_recognition/close` 同时保留历史 `colse` alias；回调现在立即注销订阅、清活动状态并归零，但保留服务进程供人工 `/competition/reset_mission` 再次启用，shape launch 不再 respawn。实际服务可用性仍必须以实机 `rosservice list/type` 为准。
 
-## 8. 变更影响与回滚
+## 9. 变更影响与回滚
 
 本分支采用增量接入：不改地图、原导航点、夹取动作、放置动作、坡面算法和底层速度接口。新增识别会话和生命周期门禁只包围原流程的三个位置及任务首尾。
 

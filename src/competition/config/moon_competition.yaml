@@ -4,15 +4,44 @@ enable_voice: true
 voice_init_timeout: 20.0
 initialization_timeout: 60.0
 
-navigation_timeout: 60.0
+# The hard deadline is 7m30s, leaving 30s before the official 8-minute limit.
+# Body stages can use at most 390s; the last 60s are reserved for return and speech.
+mission_timeout_seconds: 450.0
+return_reserve_seconds: 60.0
+announcement_reserve_seconds: 20.0
+deadline_warning_seconds: 90.0
+
+service_discovery_timeout: 2.0
+navigation_timeout: 35.0
+pick_navigation_timeout: 20.0
+return_navigation_timeout: 40.0
 move_base_server_timeout: 10.0
-moon_detection_timeout: 18.0
+moon_session_timeout: 25.0
+moon_detection_timeout: 12.0
 maximum_result_age: 5.0
-moon_start_timeout: 60.0
-moon_unload_timeout: 10.0
+moon_start_timeout: 12.0
+moon_unload_timeout: 5.0
 place_service_timeout: 8.0
-yolo_start_timeout: 15.0
-yolo_unload_timeout: 10.0
+correction_status_timeout: 15.0
+shape_start_timeout: 3.0
+shape_pick_service_timeout: 4.0
+shape_pick_timeout: 18.0
+shape_pick_stage_timeout: 25.0
+shape_stop_timeout: 1.0
+shape_warmup_seconds: 0.5
+yolo_detection_timeout: 8.0
+yolo_start_timeout: 12.0
+yolo_unload_timeout: 5.0
+audio_playback_timeout: 4.0
+
+# Aggregate stage caps. The mission-wide deadline still wins when less time remains.
+initial_stage_timeout: 20.0
+detect_stage_timeout: 50.0
+pick_stage_timeout: 85.0
+place_stage_timeout: 45.0
+remaining_tasks_timeout: 60.0
+return_stage_timeout: 40.0
+announcement_stage_timeout: 20.0
 
 voice_volume: 100
 # The baseline mission uses laser-corrected reverse traversal. Enable only after
@@ -34,4 +63,5 @@ ramp_approach_pose:
 
 ramp_return_distance: 1.3
 ramp_return_speed: 0.25
-ramp_return_timeout: 20.0
+ramp_return_timeout: 15.0
+ramp_alignment_timeout: 20.0
