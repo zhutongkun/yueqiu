@@ -13,6 +13,7 @@ import math
 import queue
 import rospy
 import threading
+import time
 import numpy as np
 import sdk.common as common
 import message_filters
@@ -72,6 +73,11 @@ class RgbDepthImageNode:
         self.calibration_flat = False
         self.calibration_dist = False
         self.pick_state = False #是否开始检测
+        self.operation_lock = threading.RLock()
+        self.operation_generation = 0
+        self.operation_cancelled = True
+        self.move_thread = None
+        self.goto_thread = None
         offset = rospy.get_param('/offset') #识别的类别
         self.shape_dist = rospy.get_param('/shape_dist') #识别的类别
         self.offset_x = offset[0]
@@ -97,6 +103,7 @@ class RgbDepthImageNode:
         rospy.Service('~stop', Trigger, self.stop_callback) #停止节点
         rospy.Service('~start', Trigger, self.start_callback) #启动形状识别
         rospy.Service('~colse', Trigger, self.colse_callback) #关闭节点
+        rospy.Service('~close', Trigger, self.colse_callback)
         rospy.sleep(2)
         # rospy.wait_for_service('/robot_1/gemini_camera/set_ldp') #等待相机ldp服务
         rospy.wait_for_service('/gemini_camera/set_ldp') #等待相机ldp服务
@@ -116,9 +123,16 @@ class RgbDepthImageNode:
 
 
 
-   #启动形状识别
+    #启动形状识别
     def start_callback(self,msg):
-        threading.Thread(target=self.goto_default, args=()).start() #得到相机目前的末端位置
+        self.stop_callback(msg)
+        self.close = False
+        with self.operation_lock:
+            self.operation_cancelled = False
+        if self.goto_thread is None or not self.goto_thread.is_alive():
+            self.goto_thread = threading.Thread(target=self.goto_default, args=())
+            self.goto_thread.daemon = True
+            self.goto_thread.start() #得到相机目前的末端位置
         self.rgb_sub = message_filters.Subscriber('/gemini_camera/rgb/image_raw', RosImage, queue_size=1) # rgb话题
         # self.rgb_sub = message_filters.Subscriber('/robot_1/gemini_camera/rgb/image_raw', RosImage, queue_size=1) # rgb话题
         self.depth_sub = message_filters.Subscriber('/gemini_camera/depth/image_raw', RosImage, queue_size=1) # 深度话题
@@ -128,26 +142,67 @@ class RgbDepthImageNode:
         # 同步时间戳, 时间允许有误差在0.03s
         self.sync = message_filters.ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub, self.info_sub], 3, 0.03)
         self.sync.registerCallback(self.multi_callback) #执行反馈函数
+        rospy.set_param('~status', 'start')
         return TriggerResponse(success=True)
     #停止形状识别
     def stop_callback(self,msg):
-        self.rgb_sub.unregister() #关闭话题
-        self.depth_sub.unregister()
-        self.info_sub.unregister()
+        with self.operation_lock:
+            self.operation_generation += 1
+            self.operation_cancelled = True
+            self.pick_state = False
+            self.moving = False
+            move_thread = self.move_thread
+        for attribute_name in ('rgb_sub', 'depth_sub', 'info_sub'):
+            subscriber = getattr(self, attribute_name)
+            if subscriber is not None:
+                try:
+                    subscriber.unregister()
+                except Exception:
+                    pass
+                setattr(self, attribute_name, None)
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except queue.Empty:
+                break
+        rospy.set_param('~status', 'stop')
+        if (
+            move_thread is not None
+            and move_thread.is_alive()
+            and move_thread is not threading.current_thread()
+        ):
+            move_thread.join(timeout=1.0)
         return TriggerResponse(success=True)
     #关闭节点
     def colse_callback(self,msg):
         self.close = True
+        self.stop_callback(msg)
         return TriggerResponse(success=True)
     #进行夹取
     def pick_callback(self,msg):
+        with self.operation_lock:
+            self.operation_generation += 1
+            generation = self.operation_generation
+            self.operation_cancelled = False
+            self.pick_state = False
+            self.moving = False
         #设置目标形状
         self.target_shape = rospy.get_param('/shape_recognition/target_shape',"box")
         #进入机械臂进入夹取状态
-        set_servos(self.servos_pub, 1, ((1, 500), (2, 500), (3, 150), (4, 130), (5, 500), (10, 200)))
-        rospy.sleep(2)
-        self.pick_state = True
+        if not self._set_servos_if_active(
+            generation,
+            1,
+            ((1, 500), (2, 500), (3, 150), (4, 130), (5, 500), (10, 200)),
+        ):
+            return TriggerResponse(success=False, message='pick was cancelled')
+        if not self._sleep_if_active(generation, 2.0):
+            return TriggerResponse(success=False, message='pick was cancelled')
+        with self.operation_lock:
+            if not self._operation_active_unlocked(generation, require_pick=False):
+                return TriggerResponse(success=False, message='pick was cancelled')
+            self.pick_state = True
         rospy.set_param('~pick', True)
+        rospy.set_param('~status', 'start')
         return TriggerResponse(success=True)
 
     def calibration_dist_callback(self,msg):
@@ -171,55 +226,100 @@ class RgbDepthImageNode:
     
     # 得到机械臂末端坐标
     def goto_default(self):
-        while not rospy.is_shutdown():
-            endpoint = rospy.ServiceProxy('/kinematics/get_current_pose', GetRobotPose)()
-            # print(endpoint)
-            pose_t = endpoint.pose.position
-            pose_r = endpoint.pose.orientation
-            self.endpoint = xyz_quat_to_mat([pose_t.x, pose_t.y, pose_t.z], [pose_r.w, pose_r.x, pose_r.y, pose_r.z]) 
+        while not rospy.is_shutdown() and not self.close:
+            try:
+                rospy.wait_for_service('/kinematics/get_current_pose', timeout=1.0)
+                endpoint = rospy.ServiceProxy('/kinematics/get_current_pose', GetRobotPose)()
+                pose_t = endpoint.pose.position
+                pose_r = endpoint.pose.orientation
+                self.endpoint = xyz_quat_to_mat([pose_t.x, pose_t.y, pose_t.z], [pose_r.w, pose_r.x, pose_r.y, pose_r.z])
+            except Exception as exc:
+                rospy.logwarn_throttle(5.0, 'get_current_pose failed: %s', exc)
+            rospy.sleep(0.1)
+
+    def _operation_active_unlocked(self, generation, require_pick=True):
+        return (
+            not self.operation_cancelled
+            and generation == self.operation_generation
+            and (self.pick_state or not require_pick)
+            and not rospy.is_shutdown()
+        )
+
+    def _operation_active(self, generation, require_pick=True):
+        with self.operation_lock:
+            return self._operation_active_unlocked(generation, require_pick=require_pick)
+
+    def _sleep_if_active(self, generation, duration):
+        deadline = time.monotonic() + max(0.0, float(duration))
+        while time.monotonic() < deadline:
+            if not self._operation_active(generation, require_pick=False):
+                return False
+            rospy.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+        return self._operation_active(generation, require_pick=False)
+
+    def _set_servos_if_active(self, generation, duration, positions):
+        if not self._operation_active(generation, require_pick=False):
+            return False
+        set_servos(self.servos_pub, duration, positions)
+        return True
 
     # 夹取函数
-    def move(self, shape, pose_t, angle):  
-        rospy.sleep(0.5)
-        pose_t[2] += 0.02
-        ret1 = kinematics_control.set_pose_target(pose_t, 85) # 根据逆运动学得到舵机脉宽
-        if len(ret1[1]) > 0:
-            set_servos(self.servos_pub, 1.5, ((1, ret1[1][0]), (2, ret1[1][1]), (3, ret1[1][2]), (4, ret1[1][3]),(5, ret1[1][4])))
-            rospy.sleep(1.5)
-        pose_t[2] -= 0.05
-        # print(pose_t)
-        ret2 = kinematics_control.set_pose_target(pose_t, 85)
-        # print(ret2)
-        if angle != 0 and len(ret2[1]) > 0:
-            angle = angle % 180
-            angle = angle - 180 if angle > 90 else (angle + 180 if angle < -90 else angle)
-            angle = 500 + int(1000 * (angle + ret2[3][-1]) / 240)
-        else:
-            angle = 500
-        if len(ret2[1]) > 0:
-            set_servos(self.servos_pub, 0.5, ((5, angle),))
-            rospy.sleep(0.5)
-            set_servos(self.servos_pub, 1, ((1, ret2[1][0]), (2, ret2[1][1]), (3, ret2[1][2]), (4, ret2[1][3]),(5, angle)))
-            rospy.sleep(1)
-            set_servos(self.servos_pub, 0.6, ((10, 750),))
-            rospy.sleep(0.6)
-        if len(ret1[1]) > 0:
-            set_servos(self.servos_pub, 1, ((1, ret1[1][0]), (2, ret1[1][1]), (3, ret1[1][2]), (4, ret1[1][3]),(5, angle)))
-            rospy.sleep(1)
-        set_servos(self.servos_pub, 1, ((1, 500), (2, 720), (3, 100), (4, 150), (5, 500), (10, 650)))
-        rospy.sleep(1)
-        rospy.set_param('~status', 'stop')
-        self.pick_state = False
-        self.moving = False
+    def move(self, shape, pose_t, angle, generation):
+        completed = False
+        try:
+            if not self._sleep_if_active(generation, 0.5):
+                return
+            pose_t[2] += 0.02
+            ret1 = kinematics_control.set_pose_target(pose_t, 85) # 根据逆运动学得到舵机脉宽
+            if len(ret1[1]) > 0:
+                if not self._set_servos_if_active(generation, 1.5, ((1, ret1[1][0]), (2, ret1[1][1]), (3, ret1[1][2]), (4, ret1[1][3]),(5, ret1[1][4]))):
+                    return
+                if not self._sleep_if_active(generation, 1.5):
+                    return
+            pose_t[2] -= 0.05
+            ret2 = kinematics_control.set_pose_target(pose_t, 85)
+            if angle != 0 and len(ret2[1]) > 0:
+                angle = angle % 180
+                angle = angle - 180 if angle > 90 else (angle + 180 if angle < -90 else angle)
+                angle = 500 + int(1000 * (angle + ret2[3][-1]) / 240)
+            else:
+                angle = 500
+            if len(ret2[1]) > 0:
+                if not self._set_servos_if_active(generation, 0.5, ((5, angle),)):
+                    return
+                if not self._sleep_if_active(generation, 0.5):
+                    return
+                if not self._set_servos_if_active(generation, 1, ((1, ret2[1][0]), (2, ret2[1][1]), (3, ret2[1][2]), (4, ret2[1][3]),(5, angle))):
+                    return
+                if not self._sleep_if_active(generation, 1.0):
+                    return
+                if not self._set_servos_if_active(generation, 0.6, ((10, 750),)):
+                    return
+                if not self._sleep_if_active(generation, 0.6):
+                    return
+            if len(ret1[1]) > 0:
+                if not self._set_servos_if_active(generation, 1, ((1, ret1[1][0]), (2, ret1[1][1]), (3, ret1[1][2]), (4, ret1[1][3]),(5, angle))):
+                    return
+                if not self._sleep_if_active(generation, 1.0):
+                    return
+            if not self._set_servos_if_active(generation, 1, ((1, 500), (2, 720), (3, 100), (4, 150), (5, 500), (10, 650))):
+                return
+            if not self._sleep_if_active(generation, 1.0):
+                return
+            completed = True
+            rospy.set_param('~status', 'stop')
+        finally:
+            with self.operation_lock:
+                if generation == self.operation_generation:
+                    self.pick_state = False
+                    self.moving = False
+                    if completed:
+                        self.operation_cancelled = True
     # 时间同步回调函数
     def multi_callback(self, ros_rgb_image, ros_depth_image, depth_camera_info):
         if self.queue.empty():
             self.queue.put_nowait((ros_rgb_image, ros_depth_image, depth_camera_info))
             self.image_proc()
-        #判断是否需要关闭节点
-        if self.close :
-            rospy.signal_shutdown('shutdown')
-
     # 开始检测
     def image_proc(self):
         try:
@@ -384,8 +484,21 @@ class RgbDepthImageNode:
                         pose_t[2] += self.offset_z
                         self.count = 0
                         # if self.callback is not True:
-                        self.moving = True
-                        threading.Thread(target=self.move, args=(shape[:-2], pose_t, angle)).start()
+                        with self.operation_lock:
+                            if (
+                                not self.moving
+                                and self._operation_active_unlocked(
+                                    self.operation_generation
+                                )
+                            ):
+                                generation = self.operation_generation
+                                self.moving = True
+                                self.move_thread = threading.Thread(
+                                    target=self.move,
+                                    args=(shape[:-2], pose_t, angle, generation),
+                                )
+                                self.move_thread.daemon = True
+                                self.move_thread.start()
                 self.last_shape = shape
 
                 # bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)

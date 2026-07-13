@@ -1,0 +1,10 @@
+satellite
+space_station
+lunar_crater
+lunar_rover
+meteorite
+earth
+lunar_soil
+moon
+rocket
+astronaut

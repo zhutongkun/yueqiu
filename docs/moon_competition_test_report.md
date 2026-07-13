@@ -1,0 +1,161 @@
+# 月球探索比赛测试报告
+
+检查日期：2026-07-13（Asia/Shanghai）
+
+## 1. 当前测试边界
+
+当前可访问环境是 Windows 开发电脑，不是目标 Ubuntu/Jetson 小车；本机没有 ROS1、catkin、可用的目标相机、底盘、机械臂和离线声卡链路，目标小车也无法从本机连通。因此本报告区分开发机验证和实机验收，绝不把静态检查或模拟测试写成 catkin/实车通过。
+
+状态说明：
+
+- `开发机已验证`：已有实际命令、测试或模型验证证据。
+- `待执行`：需要补充测试夹具或完整集成运行。
+- `需要小车实机确认`：依赖 ROS 图、Jetson、导航、执行器、相机、音频或 systemd。
+- `部分验证`：开发机已有一部分证据，但尚未满足最终实机门槛。
+
+模型的详细数值结果见 `docs/moon_model_validation.md`；运行环境边界见 `docs/runtime_environment_report.md`。
+
+## 2. 五十项测试矩阵
+
+| # | 测试项 | 当前证据或执行方法 | 状态 |
+| ---: | --- | --- | --- |
+| 1 | Python 语法 | `py_compile` 实测主程序、检测节点、核心模块和测试文件，退出码 0 | 开发机已验证 |
+| 2 | launch XML | 实测解析主比赛 launch 和 Moon detector launch | 开发机已验证 |
+| 3 | YAML 解析 | 临时隔离安装的 PyYAML 6.0.3 实测解析两个 Moon 配置，均为有效字典 | 开发机已验证 |
+| 4 | shell `bash -n` | Git for Windows Bash 实测五个部署脚本，退出码 0 | 开发机已验证 |
+| 5 | `package.xml` | .NET XML 解析实测通过；ROS 依赖解析仍由 catkin 验证 | 开发机已验证 |
+| 6 | `CMakeLists.txt` | 静态确认四个运行脚本、资源安装规则和主控制所需 catkin 依赖；真正配置仍由 catkin 验证 | 部分验证，需实机确认 |
+| 7 | catkin 编译 | 在目标 ROS1 工作空间执行 `catkin_make` | 需要小车实机确认 |
+| 8 | 绝对路径检查 | 实测搜索新增脚本/文档，无 Windows 用户路径或固定 Linux 用户家目录 | 开发机已验证 |
+| 9 | 模型 SHA256 | 独立资源测试实测为 `ab953a...7da34`，大小 14,438,056 bytes | 开发机已验证 |
+| 10 | 模型加载 | checkpoint 归档和 OpenCV DNN 已加载；原生 PyTorch/Jetson 加载尚未完成 | 部分验证，需实机确认 |
+| 11 | 十类映射 | checkpoint、数据 YAML、标签与规定 ID 0-9 一致 | 开发机已验证 |
+| 12 | 单图推理 | OpenCV DNN 数值前向已执行，非只读训练日志 | 开发机已验证 |
+| 13 | 十类抽样 | 71 张验证图覆盖十类，主目标映射 71/71 一致 | 开发机已验证 |
+| 14 | 背景误报 | 代理背景已测；真实赛场、曝光和距离背景尚缺 | 部分验证，需实机确认 |
+| 15 | 多帧投票 | `MultiFrameVoter` 稳定票数测试包含在 28 项单元测试中 | 开发机已验证 |
+| 16 | 票数不足 | 实测保持 pending，不强制分类 | 开发机已验证 |
+| 17 | 两类冲突 | 实测同票同置信度返回 conflict，不随机选择 | 开发机已验证 |
+| 18 | 超时 | fake clock 实测 timeout/no forced classification | 开发机已验证 |
+| 19 | 模型缺失 | 检测节点显式返回 `model_error`，主任务记录失败并保持统一停止；ROS 服务联动仍需实机故障注入 | 部分验证，需实机确认 |
+| 20 | 三个结果独立 | 生命周期防御性复制和固定槽位单元测试已通过 | 开发机已验证 |
+| 21 | 第一任务点后不播报 | 控制器契约测试确认统一识别函数不调用播报/返航；声卡仍需实机 | 部分验证，需实机确认 |
+| 22 | 第二任务点后不播报 | 控制器契约测试确认统一识别函数不调用播报/返航；声卡仍需实机 | 部分验证，需实机确认 |
+| 23 | 第三任务点后不播报 | 契约测试确认第三点后先执行原后退和第二次放置 | 部分验证，需实机确认 |
+| 24 | 第三点完成但仍有夹取时不返航 | 生命周期返航门禁单元测试；实机观察第二次夹取 | 部分验证，需实机确认 |
+| 25 | 第三点完成但仍有坡面任务时不返航 | 契约测试确认激光坡面穿越成功后才置 `ramp_task_finished`，该标志又是返航门禁的一部分 | 部分验证，需实机确认 |
+| 26 | 三点完成但 `all_competition_tasks_finished=false` 不返航 | `test_third_scene_result_does_not_request_return` 已通过 | 开发机已验证 |
+| 27 | 所有剩余任务完成后才返航 | 第二次放置、节点关闭、安全臂姿态和坡面穿越均位于 `mark_all_tasks_finished` 前；生命周期门禁测试通过 | 部分验证，需实机确认 |
+| 28 | 已发基地目标但未到达时不播报 | `begin_announcing` 在未 returned 时拒绝，单元测试已通过 | 开发机已验证 |
+| 29 | 真正到达基地后才播报 | move_base 结果、坡道里程和停车位必须现场确认 | 需要小车实机确认 |
+| 30 | 播报顺序 1、2、3 | snapshot 固定排序、控制器播报顺序和 16 个 PCM WAV 测试通过 | 部分验证，需实机确认 |
+| 31 | 第二点失败仍播报三条 | 失败槽位保留单元测试；声卡完整播放需实机 | 部分验证，需实机确认 |
+| 32 | 重复导航成功回调只播报一次 | returned/announcing one-shot 生命周期测试已通过 | 开发机已验证 |
+| 33 | 第 5 秒语音只执行一次 | 语音回调统一入口与启动令牌测试通过；真实 ASR/Timer 仍需 ROS | 部分验证，需实机确认 |
+| 34 | 无语音第 15 秒执行一次 | oneshot `rospy.Timer` 和 timeout 只请求统一入口的契约测试通过 | 部分验证，需实机确认 |
+| 35 | 第 14.9 秒语音和 Timer 竞争只执行一次 | 16 线程并发竞争测试已通过；真实 Timer 仍需 ROS | 部分验证，需实机确认 |
+| 36 | 连续多次启动语音只执行一次 | 重复 `request_start_token` 单元测试；ASR 需 ROS | 部分验证，需实机确认 |
+| 37 | 运行中再次收到语音被拒绝 | RUNNING 状态单元测试已通过 | 开发机已验证 |
+| 38 | 完成后再次收到语音被拒绝 | COMPLETED 状态单元测试已通过 | 开发机已验证 |
+| 39 | 完成后 start service 被拒绝 | service 统一入口及 COMPLETED 拒绝测试通过；ROS 服务仍需实机 | 部分验证，需实机确认 |
+| 40 | 完成后等待至少 30 秒不执行第二遍 | 实际墙钟 30 秒并发 voice/timeout/service 回归通过；完整 ROS 节点仍需实机 | 部分验证，需实机确认 |
+| 41 | `mission_execution_count` 保持 1 | 完成态 snapshot 单元测试已通过 | 开发机已验证 |
+| 42 | stop 后 Timer 不启动任务 | stop 状态拒绝启动测试已通过；ROS Timer 取消仍需实机 | 部分验证，需实机确认 |
+| 43 | error 后 Timer 不启动任务 | error 状态拒绝启动测试已通过；ROS Timer 取消仍需实机 | 部分验证，需实机确认 |
+| 44 | shutdown 取消 Timer | 契约测试确认 shutdown 进入统一清理；真实 ROS Timer、服务竞争和进程信号仍需实机 | 部分验证，需实机确认 |
+| 45 | 导航失败底盘归零 | 注入 move_base 失败并监测 `/controller/cmd_vel` | 需要小车实机确认 |
+| 46 | 检测失败底盘归零 | 模型/相机故障注入并监测速度话题 | 需要小车实机确认 |
+| 47 | Ctrl+C 底盘归零 | `run` trap、shutdown 回调和真实控制器观测 | 需要小车实机确认 |
+| 48 | 返回基地后底盘归零 | 实际基地到达后观测 Twist 全零 | 需要小车实机确认 |
+| 49 | 播报异常不会重新运动 | 声卡/WAV 故障注入并观察状态和速度 | 需要小车实机确认 |
+| 50 | APP 服务冲突检查 | `systemctl is-active`、运行脚本停止、比赛中不恢复 | 需要小车实机确认 |
+
+## 3. 自动测试实测结果
+
+完整开发机测试发现命令：
+
+```text
+python -m unittest discover -s src/competition/tests -p "test_*.py" -v
+Ran 98 tests
+OK
+```
+
+98 项由以下部分组成：
+
+- 4 项资源测试：`best.pt` 大小/SHA256、十类文件顺序、vendored YOLOv5 文件和无嵌套 `.git`、16 个单声道 16-bit PCM WAV。
+- 47 项控制器/检测器/辅助节点契约测试：第三点后原流程、第二次放置、坡面完成门禁、单次坡面穿越、最终 move_base、统一异常清理、关闭节点、播报顺序、一次性 Timer、统一启动入口、语音开关、手工服务互斥、动作超时、安全臂等待、禁止运行时 pip 安装、Moon 懒加载/卸载和旧 TensorRT CUDA context 释放竞态/构造失败清理。
+- 12 项部署契约测试：launch/YAML 覆盖优先级、ROS/catkin 依赖、install-space 资产、Python 3.8 门禁、ROS underlay/build tool 选择、固定依赖版本、运行时禁止联网安装和安全停止卸载两个视觉模型。
+- 28 项 ROS 无关核心测试：启动竞争、终态拒绝、三个结果、返航/播报 one-shot、多帧投票、冲突/超时和原子 JSON。
+- 7 项可部署验证工具测试：manifest 十类映射、12 张样本资产、路径边界、严格正样本匹配及 0.70 阈值负样本误报失败。
+
+另行实际执行 30 秒实时回归：
+
+```text
+python src/competition/tests/integration_duplicate_start_30s.py
+30-second duplicate-start regression passed: COMPLETED
+exit: 0
+```
+
+该测试在完成态持续并发注入 `voice`、`timeout` 和 `service` 请求，所有请求均被拒绝，`mission_state` 保持 `COMPLETED`，`mission_execution_count` 保持 `1`。它是实际墙钟等待，不是 fake clock；但仍是 ROS 无关生命周期测试，目标小车上的真实 ASR、`rospy.Timer` 和服务回调必须补测。
+
+## 4. 数据集复检结果
+
+Moon 数据集已重新实际统计，结果为：
+
+| 项目 | 结果 |
+| --- | ---: |
+| 训练图片 | 283 |
+| 验证图片 | 71 |
+| 测试图片 | 0 |
+| 总图片 | 354 |
+| 尺寸 | 全部 640x480 |
+| 每图标注框 | 1 |
+| 空标签/缺失标签/损坏图片 | 0/0/0 |
+| 非法或越界坐标 | 0 |
+| 重复图片 | 0 |
+| 独立负样本 | 0 |
+
+`classes.txt`、`data.yaml` 和 checkpoint 类别顺序一致。71 张验证图的开发机 OpenCV DNN 一次性数值验证主目标类别为 71/71 一致，十类均有代表样本；代理背景在默认 0.70 阈值下未产生有效结果。仓库已保存十类各一张验证图片和 `bus.jpg`、`zidane.jpg` 两张代理负样本，manifest 固定 SHA256、尺寸、类别和真值标注。`python tools/validate_moon_assets.py` 静态资产校验实测通过，无需外部数据集。
+
+严格原生推理命令 `--require-cpu-inference` 和 `--require-gpu-inference` 也已实际执行，但当前 Windows 默认 Python 缺少 `torch`、`cv2`、`numpy` 和 `ultralytics`，两者均以退出码 2 失败，不能写成已通过。新增 7 项验证工具测试全部通过，包含十类/manifest 一致性、路径越界防护、正样本错类失败和 0.71 负样本误报严格失败。数据集没有独立测试集和真实比赛场地负样本，所以真实赛场背景、距离、角度、光照和遮挡仍必须上车复检。完整分布、置信度和耗时见 `docs/moon_model_validation.md`。
+
+## 5. 当前已确认事实
+
+- 真实主 launch 为 `competition/position_correction_pick.launch`。
+- 主程序、move_base、对齐和坡面共同使用 `/controller/cmd_vel`。
+- Moon 默认图像话题为 `/astra_camera/rgb/image_raw`，但真实相机发布者仍需上车确认。
+- 三次识别插入点分别位于原目标确认后、第一次夹取后退后、第二次夹取后。
+- 第三次识别之后仍有原后退、第二次放置、节点关闭、安全臂姿态和坡面收尾任务；这些完成后才允许请求最终基地目标。
+- 模型文件大小、SHA256、十类顺序和开发机数值推理已有证据。
+- Git for Windows Bash 对五个部署脚本执行 `bash -n` 通过。
+- 主程序、检测节点、核心模块和测试文件 `py_compile` 通过。
+- 自动测试实际运行 98 项，全部通过。
+- 30 秒实时重复启动回归通过，完成态和执行次数保持不变。
+- 主比赛 launch、Moon detector launch 和 `package.xml` XML 解析通过。
+- 使用隔离在临时目录中的 PyYAML 6.0.3 实际解析 `moon_detector.yaml` 和 `moon_competition.yaml` 通过；没有修改系统 Python 或项目依赖。
+- 当前不能宣称 catkin 编译、Jetson CUDA 推理、TensorRT、真实导航、机械臂或音频通过。
+
+## 6. 实机测试记录模板
+
+每次实机运行至少保存：
+
+```text
+日期/操作者：
+Git commit：
+Jetson/JetPack/ROS：
+模型 SHA256：
+地图与基地坐标版本：
+启动来源：voice / timeout / service
+mission_execution_count：
+任务点 1 session/result：
+任务点 2 session/result：
+任务点 3 session/result：
+第二次放置完成证据：
+返航目标与 move_base 状态：
+基地到达/零速度证据：
+播报 1-2-3 录音或观察：
+完成后 30 秒观察：
+异常与日志路径：
+```
+
+任何失败都应保留对应任务点和日志，不得用人工结果替换，也不得为了形成“通过”结论删除失败运行。

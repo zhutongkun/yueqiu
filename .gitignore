@@ -45,6 +45,12 @@ srv/_*.py
 qtcreator-*
 *.user
 
+# Competition runtime output and vendored-repository metadata
+runtime/
+src/competition/third_party/yolov5/.git/
+src/competition/models/moon/*.engine
+src/competition/models/moon/*.onnx
+
 /planning/cfg
 /planning/docs
 /planning/src

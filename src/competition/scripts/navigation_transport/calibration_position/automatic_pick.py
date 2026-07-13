@@ -26,6 +26,9 @@ debug = False
 start_pick = False
 close = False
 start_place = False
+operation_lock = threading.RLock()
+operation_generation = 0
+operation_cancel_requested = True
 target_color = ""
 linear_base_speed = 0.007
 angular_base_speed = 0.03
@@ -57,18 +60,63 @@ count_turn = 0
 
 lab_data = common.get_yaml_data("/home/ubuntu/software/lab_tool/lab_config.yaml")
 
+def begin_operation():
+    global operation_generation, operation_cancel_requested
+    with operation_lock:
+        operation_generation += 1
+        operation_cancel_requested = False
+        return operation_generation
+
+def operation_active(generation):
+    with operation_lock:
+        return (
+            not operation_cancel_requested
+            and generation == operation_generation
+            and not rospy.is_shutdown()
+        )
+
+def sleep_if_active(generation, duration):
+    deadline = time.monotonic() + max(0.0, float(duration))
+    while time.monotonic() < deadline:
+        if not operation_active(generation):
+            return False
+        rospy.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+    return operation_active(generation)
+
+def set_servos_if_active(generation, duration, positions):
+    if not operation_active(generation):
+        return False
+    bus_servo_control.set_servos(joints_pub, duration, positions)
+    return True
+
+def activate_alignment(generation):
+    global start_pick
+    with operation_lock:
+        if (
+            operation_cancel_requested
+            or generation != operation_generation
+            or rospy.is_shutdown()
+        ):
+            rospy.set_param('~status', 'stop')
+            return False
+        start_pick = True
+        return True
+
 def start_pick_callback(msg):
     global start_pick, yaw_angle, pick_stop_x, pick_stop_y, stop, status, target_color, broadcast_status
     global linear_speed, angular_speed
     global d_x, d_y
     global pick, place
     global count_turn, count_stop
+    generation = begin_operation()
 
     rospy.loginfo("start pick_1")
     rospy.set_param('~status', 'pick')
 
-    bus_servo_control.set_servos(joints_pub, 2, ((1, 500), (2, 720), (3, 100), (4, 150), (5, 500), (10, 200)))
-    rospy.sleep(2)
+    if not set_servos_if_active(generation, 2, ((1, 500), (2, 720), (3, 100), (4, 150), (5, 500), (10, 200))):
+        return TriggerResponse(success=False, message='alignment was cancelled')
+    if not sleep_if_active(generation, 2.0):
+        return TriggerResponse(success=False, message='alignment was cancelled')
     linear_speed = 0
     angular_speed = 0
     yaw_angle = 90
@@ -92,7 +140,8 @@ def start_pick_callback(msg):
 
     linear_pid.clear()
     angular_pid.clear()
-    start_pick = True
+    if not activate_alignment(generation):
+        return TriggerResponse(success=False, message='alignment was cancelled')
 
     return TriggerResponse(success=True)
 
@@ -102,12 +151,15 @@ def start_pick_2_callback(msg):
     global d_x, d_y
     global pick, place
     global count_turn, count_stop
+    generation = begin_operation()
 
     rospy.loginfo("start pick_2")
     rospy.set_param('~status', 'pick')
 
-    bus_servo_control.set_servos(joints_pub, 1, ((1, 500), (2, 500), (3, 150), (4, 130), (5, 500), (10, 200)))
-    rospy.sleep(2)
+    if not set_servos_if_active(generation, 1, ((1, 500), (2, 500), (3, 150), (4, 130), (5, 500), (10, 200))):
+        return TriggerResponse(success=False, message='pick_2 was cancelled')
+    if not sleep_if_active(generation, 2.0):
+        return TriggerResponse(success=False, message='pick_2 was cancelled')
 
     rospy.set_param('~status', 'stop')
     return TriggerResponse(success=True)
@@ -118,6 +170,7 @@ def start_pick_3_callback(msg):
     global d_x, d_y
     global pick, place
     global count_turn, count_stop
+    generation = begin_operation()
 
     rospy.loginfo("start pick_3")
     rospy.set_param('~status', 'pick')
@@ -146,7 +199,8 @@ def start_pick_3_callback(msg):
 
     linear_pid.clear()
     angular_pid.clear()
-    start_pick = True
+    if not activate_alignment(generation):
+        return TriggerResponse(success=False, message='alignment was cancelled')
 
     return TriggerResponse(success=True)
 
@@ -156,12 +210,15 @@ def start_place_callback(msg):
     global d_x, d_y
     global pick, place
     global count_turn, count_stop
+    generation = begin_operation()
 
     rospy.loginfo("start place_1")
     rospy.set_param('~status', 'place')
 
-    bus_servo_control.set_servos(joints_pub, 2, ((1, 500), (2, 720), (3, 100), (4, 150), (5, 500), (10, 650)))
-    rospy.sleep(2)
+    if not set_servos_if_active(generation, 2, ((1, 500), (2, 720), (3, 100), (4, 150), (5, 500), (10, 650))):
+        return TriggerResponse(success=False, message='place alignment was cancelled')
+    if not sleep_if_active(generation, 2.0):
+        return TriggerResponse(success=False, message='place alignment was cancelled')
     linear_speed = 0
     angular_speed = 0
     yaw_angle = 90
@@ -184,7 +241,8 @@ def start_place_callback(msg):
 
     linear_pid.clear()
     angular_pid.clear()
-    start_pick = True
+    if not activate_alignment(generation):
+        return TriggerResponse(success=False, message='place alignment was cancelled')
 
     return TriggerResponse(success=True)
 
@@ -194,8 +252,11 @@ def start_place_2_callback(msg):
     global d_x, d_y
     global pick, place
     global count_turn, count_stop
-    bus_servo_control.set_servos(joints_pub, 2, ((1, 500), (2, 720), (3, 100), (4, 100), (5, 500), (10, 600)))
-    rospy.sleep(2)
+    generation = begin_operation()
+    if not set_servos_if_active(generation, 2, ((1, 500), (2, 720), (3, 100), (4, 100), (5, 500), (10, 600))):
+        return TriggerResponse(success=False, message='place_2 was cancelled')
+    if not sleep_if_active(generation, 2.0):
+        return TriggerResponse(success=False, message='place_2 was cancelled')
 
     rospy.loginfo("start place_2")
     rospy.set_param('~status', 'place')
@@ -222,7 +283,8 @@ def start_place_2_callback(msg):
 
     linear_pid.clear()
     angular_pid.clear()
-    start_pick = True
+    if not activate_alignment(generation):
+        return TriggerResponse(success=False, message='place_2 was cancelled')
 
     return TriggerResponse(success=True)
 
@@ -232,14 +294,21 @@ def start_place_3_callback(msg):
     global d_x, d_y
     global pick, place
     global count_turn, count_stop
+    generation = begin_operation()
 
     rospy.loginfo("start place_3")
-    bus_servo_control.set_servos(joints_pub, 2, ((1, 500), (2, 210), (3, 320), (4, 350), (5, 500), (10, 650)))
-    rospy.sleep(2)
-    bus_servo_control.set_servos(joints_pub, 0.5, ((10, 200),))
-    rospy.sleep(0.5)
-    bus_servo_control.set_servos(joints_pub, 2, ((1, 500), (2, 720), (3, 100), (4, 150), (5, 500), (10, 200)))
-    rospy.sleep(2)
+    if not set_servos_if_active(generation, 2, ((1, 500), (2, 210), (3, 320), (4, 350), (5, 500), (10, 650))):
+        return TriggerResponse(success=False, message='place_3 was cancelled')
+    if not sleep_if_active(generation, 2.0):
+        return TriggerResponse(success=False, message='place_3 was cancelled')
+    if not set_servos_if_active(generation, 0.5, ((10, 200),)):
+        return TriggerResponse(success=False, message='place_3 was cancelled')
+    if not sleep_if_active(generation, 0.5):
+        return TriggerResponse(success=False, message='place_3 was cancelled')
+    if not set_servos_if_active(generation, 2, ((1, 500), (2, 720), (3, 100), (4, 150), (5, 500), (10, 200))):
+        return TriggerResponse(success=False, message='place_3 was cancelled')
+    if not sleep_if_active(generation, 2.0):
+        return TriggerResponse(success=False, message='place_3 was cancelled')
 
     return TriggerResponse(success=True)
 
@@ -287,8 +356,8 @@ def colorDetect(img):
 
 
 count = 0
-def pick_handle(image):
-    global pick, count_turn, count_stop, angular_speed, linear_speed, status, d_x, d_y, broadcast_status, count, pick_stop_y, pick_stop_x, debug, target_color
+def pick_handle(image, generation):
+    global pick, count_turn, count_stop, angular_speed, linear_speed, status, d_x, d_y, broadcast_status, count, pick_stop_y, pick_stop_x, debug, target_color, start_pick
 
     img_center_x = image.shape[:2][1] / 2  # 获取缩小图像的宽度值的一半, 即图像中心
     img_center_y = image.shape[:2][0] / 2
@@ -408,7 +477,14 @@ def pick_handle(image):
                     twist.linear.x = linear_speed
                     twist.angular.z = angular_speed
 
-        mecnum_pub.publish(twist)
+        with operation_lock:
+            if (
+                operation_cancel_requested
+                or generation != operation_generation
+                or not start_pick
+            ):
+                twist = Twist()
+            mecnum_pub.publish(twist)
 
     return image
 
@@ -418,15 +494,18 @@ def image_callback(ros_image):
 
     rgb_image = np.ndarray(shape=(ros_image.height, ros_image.width, 3), dtype=np.uint8,
                            buffer=ros_image.data)  # 将自定义图像消息转化为图像
-    if start_pick:
+    with operation_lock:
+        active = start_pick and not operation_cancel_requested
+        generation = operation_generation
+    if active:
         stop = True
-        result_image = pick_handle(cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
+        result_image = pick_handle(
+            cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR), generation
+        )
     else:
         rospy.sleep(0.1)
         if stop:
             stop = False
-    if close:
-        rospy.signal_shutdown('shutdown')
     if calibration:
         target_color = "box"
         center_x, center_y, angle, result_image = colorDetect(cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
@@ -457,20 +536,44 @@ def calibration_callback(msg):
     return TriggerResponse(success=True)
 
 def start_callback(msg):
-    global image_sub,image_pub 
+    global image_sub,image_pub,close
+    close = False
+    if image_sub is not None:
+        try:
+            image_sub.unregister()
+        except Exception:
+            pass
     # image_pub = rospy.Publisher('~image_result', Image, queue_size=1)
     # image_sub = rospy.Subscriber("/robot_1/gemini_camera/rgb/image_raw", Image, image_callback)
     image_sub = rospy.Subscriber("/gemini_camera/rgb/image_raw", Image, image_callback)
     return TriggerResponse(success=True)
 
 def stop_callback(msg):
-    global image_sub 
-    image_sub.unregister()
+    global image_sub, start_pick, start_place, stop
+    global operation_generation, operation_cancel_requested
+    with operation_lock:
+        operation_generation += 1
+        operation_cancel_requested = True
+        start_pick = False
+        start_place = False
+        stop = True
+    rospy.set_param('~status', 'stop')
+    if image_sub is not None:
+        try:
+            image_sub.unregister()
+        except Exception:
+            pass
+        image_sub = None
+    try:
+        mecnum_pub.publish(Twist())
+    except Exception:
+        pass
     return TriggerResponse(success=True)
 
 def colse_callback(msg):
     global close
     close = True
+    stop_callback(msg)
     return TriggerResponse(success=True)
 
 if __name__ == '__main__':
@@ -493,6 +596,7 @@ if __name__ == '__main__':
     rospy.Service('~start', Trigger, start_callback)
     rospy.Service('~stop', Trigger, stop_callback)
     rospy.Service('~colse', Trigger, colse_callback)
+    rospy.Service('~close', Trigger, colse_callback)
     rospy.Service('~calibration', Trigger, calibration_callback)
     rospy.Service('~pick_1', Trigger, start_pick_callback)
     rospy.Service('~pick_2', Trigger, start_pick_2_callback)

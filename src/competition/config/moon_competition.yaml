@@ -1,0 +1,37 @@
+enable_timeout_auto_start: true
+start_timeout_seconds: 15.0
+enable_voice: true
+voice_init_timeout: 20.0
+initialization_timeout: 60.0
+
+navigation_timeout: 60.0
+move_base_server_timeout: 10.0
+moon_detection_timeout: 18.0
+maximum_result_age: 5.0
+moon_start_timeout: 60.0
+moon_unload_timeout: 10.0
+place_service_timeout: 8.0
+yolo_start_timeout: 15.0
+yolo_unload_timeout: 10.0
+
+voice_volume: 100
+# The baseline mission uses laser-corrected reverse traversal. Enable only after
+# the depth-alignment orientation is verified on the target robot.
+use_ramp_alignment_service: false
+enable_manual_debug_services: true
+
+# These poses must be checked against the final competition map on the robot.
+base_pose:
+  x: 0.0
+  y: 0.0
+  yaw: 0.0
+
+# Current source and the implementation guide both approach the return ramp here.
+ramp_approach_pose:
+  x: 1.3
+  y: 0.0
+  yaw: 0.0
+
+ramp_return_distance: 1.3
+ramp_return_speed: 0.25
+ramp_return_timeout: 20.0

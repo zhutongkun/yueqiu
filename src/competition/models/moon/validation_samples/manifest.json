@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "description": "Tracked lunar scene-element card validation samples",
+  "confidence_threshold": 0.7,
+  "iou_threshold": 0.45,
+  "classes": [
+    {"id": 0, "name_en": "satellite", "name_cn": "卫星"},
+    {"id": 1, "name_en": "space_station", "name_cn": "空间站"},
+    {"id": 2, "name_en": "lunar_crater", "name_cn": "月坑"},
+    {"id": 3, "name_en": "lunar_rover", "name_cn": "月球车"},
+    {"id": 4, "name_en": "meteorite", "name_cn": "陨石"},
+    {"id": 5, "name_en": "earth", "name_cn": "地球"},
+    {"id": 6, "name_en": "lunar_soil", "name_cn": "月壤"},
+    {"id": 7, "name_en": "moon", "name_cn": "月球"},
+    {"id": 8, "name_en": "rocket", "name_cn": "火箭"},
+    {"id": 9, "name_en": "astronaut", "name_cn": "宇航员"}
+  ],
+  "positive_samples": [
+    {
+      "class_id": 0,
+      "class_name_en": "satellite",
+      "file": "positive/00_satellite.jpg",
+      "source_split": "val",
+      "source_file": "val_0007.jpg",
+      "sha256": "3fec2dde235fce3eb06778eee2d075a6bd1b523f841873e549fb9cc5cba40e14",
+      "width": 640,
+      "height": 480,
+      "yolo_label": [0, 0.818513, 0.677215, 0.179430, 0.192405]
+    },
+    {
+      "class_id": 1,
+      "class_name_en": "space_station",
+      "file": "positive/01_space_station.jpg",
+      "source_split": "val",
+      "source_file": "val_0010.jpg",
+      "sha256": "862be8d9539a2d9e9f39100c21fda49d92bd89a67e60295858616c95e145993b",
+      "width": 640,
+      "height": 480,
+      "yolo_label": [1, 0.424051, 0.801266, 0.309494, 0.268354]
+    },
+    {
+      "class_id": 2,
+      "class_name_en": "lunar_crater",
+      "file": "positive/02_lunar_crater.jpg",
+      "source_split": "val",
+      "source_file": "val_0001.jpg",
+      "sha256": "a0e13af8e17d46a6385016abda430de989f3ae003c541ceb5ac99163c48770cc",
+      "width": 640,
+      "height": 480,
+      "yolo_label": [2, 0.443987, 0.750633, 0.214557, 0.248101]
+    },
+    {
+      "class_id": 3,
+      "class_name_en": "lunar_rover",
+      "file": "positive/03_lunar_rover.jpg",
+      "source_split": "val",
+      "source_file": "val_0004.jpg",
+      "sha256": "848ced49e9b660bcc19b095043177a0fa9517bfb3e5d87a5ecbd6b0bcedb325d",
+      "width": 640,
+      "height": 480,
+      "yolo_label": [3, 0.351899, 0.718354, 0.206962, 0.231646]
+    },
+    {
+      "class_id": 4,
+      "class_name_en": "meteorite",
+      "file": "positive/04_meteorite.jpg",
+      "source_split": "val",
+      "source_file": "val_0022.jpg",
+      "sha256": "ddbeb2d1d0b6ab51cb7bfaa2c641db47e2f35d8b9479b88c18145976759c6cde",
+      "width": 640,
+      "height": 480,
+      "yolo_label": [4, 0.568354, 0.758861, 0.197468, 0.201266]
+    },
+    {
+      "class_id": 5,
+      "class_name_en": "earth",
+      "file": "positive/05_earth.jpg",
+      "source_split": "val",
+      "source_file": "val_0042.jpg",
+      "sha256": "4aca3cab267c9cb39994ce29561a07a58eb4c648eb01dddb745d1caed3944efd",
+      "width": 640,
+      "height": 480,
+      "yolo_label": [5, 0.518038, 0.737975, 0.186076, 0.268354]
+    },
+    {
+      "class_id": 6,
+      "class_name_en": "lunar_soil",
+      "file": "positive/06_lunar_soil.jpg",
+      "source_split": "val",
+      "source_file": "val_0044.jpg",
+      "sha256": "728bda4e686a5aa7c963b6a5e8dd2dcfd2e115f56ba997f64b25a3e0b2c5eea9",
+      "width": 640,
+      "height": 480,
+      "yolo_label": [6, 0.619146, 0.736076, 0.204114, 0.178481]
+    },
+    {
+      "class_id": 7,
+      "class_name_en": "moon",
+      "file": "positive/07_moon.jpg",
+      "source_split": "val",
+      "source_file": "val_0046.jpg",
+      "sha256": "be5cdd71dc1df9b958e91826c7eeea8c91e9670a3fac98e63cf42522521b7e01",
+      "width": 640,
+      "height": 480,
+      "yolo_label": [7, 0.445411, 0.768987, 0.243987, 0.340506]
+    },
+    {
+      "class_id": 8,
+      "class_name_en": "rocket",
+      "file": "positive/08_rocket.jpg",
+      "source_split": "val",
+      "source_file": "val_0048.jpg",
+      "sha256": "94c58c26a2bb554b66b224e2b150f47a9722a8ef1e601d6d49768fba385abd95",
+      "width": 640,
+      "height": 480,
+      "yolo_label": [8, 0.450633, 0.712658, 0.218354, 0.273418]
+    },
+    {
+      "class_id": 9,
+      "class_name_en": "astronaut",
+      "file": "positive/09_astronaut.jpg",
+      "source_split": "val",
+      "source_file": "val_0049.jpg",
+      "sha256": "c36d5e210fc8a924387839102079fadcc055b5ba8ccf7c6ff246b25bb6e6899c",
+      "width": 640,
+      "height": 480,
+      "yolo_label": [9, 0.497627, 0.753165, 0.221203, 0.296203]
+    }
+  ],
+  "negative_samples": [
+    {
+      "file": "negative/bus.jpg",
+      "source_file": "yolov5/data/images/bus.jpg",
+      "sha256": "33b198a1d2839bb9ac4c65d61f9e852196793cae9a0781360859425f6022b69c",
+      "width": 810,
+      "height": 1080,
+      "expected_detection": null
+    },
+    {
+      "file": "negative/zidane.jpg",
+      "source_file": "yolov5/data/images/zidane.jpg",
+      "sha256": "356dad2107bb0254e4e4a81bc1d9c7140043e88569d546e5b404b19bffa77d0a",
+      "width": 1280,
+      "height": 720,
+      "expected_detection": null
+    }
+  ]
+}

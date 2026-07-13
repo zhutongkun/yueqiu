@@ -49,6 +49,22 @@
   <!-- Use doc_depend for packages you need only for building documentation: -->
   <!--   <doc_depend>doxygen</doc_depend> -->
   <buildtool_depend>catkin</buildtool_depend>
+  <depend>actionlib</depend>
+  <depend>actionlib_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>geometry_msgs</depend>
+  <depend>interfaces</depend>
+  <depend>kinematics</depend>
+  <depend>message_filters</depend>
+  <depend>move_base_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>ros_robot_controller</depend>
+  <depend>sdk</depend>
+  <depend>sensor_msgs</depend>
+  <depend>servo_controllers</depend>
+  <depend>servo_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>xf_mic_asr_offline</depend>
   <build_depend>roscpp</build_depend>
   <build_depend>rospy</build_depend>
   <build_depend>std_msgs</build_depend>

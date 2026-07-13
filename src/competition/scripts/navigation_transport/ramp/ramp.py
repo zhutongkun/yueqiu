@@ -25,6 +25,9 @@ config_path = os.path.join(os.path.abspath(os.path.join(os.path.split(os.path.re
 debug = False 
 start_pick = False 
 start_place = False
+ramp_cancel_requested = False
+ramp_operation_generation = 0
+ramp_state_lock = threading.Lock()
 target_color = ""
 linear_base_speed = 0.007
 angular_base_speed = 0.005
@@ -81,11 +84,26 @@ def start_up_callback(msg):
     global d_x, d_y
     global pick, place
     global count_turn, count_stop
+    global ramp_cancel_requested, ramp_operation_generation
 
     rospy.loginfo("start pick_1")
+    with ramp_state_lock:
+        ramp_operation_generation += 1
+        operation_generation = ramp_operation_generation
+        ramp_cancel_requested = False
     rospy.set_param('~status', 'pick')
     bus_servo_control.set_servos(joints_pub, 2, ((1, 500), (2, 720), (3, 100), (4, 150), (5, 500), (10, 200)))
     rospy.sleep(2)
+    with ramp_state_lock:
+        cancelled = (
+            ramp_cancel_requested
+            or operation_generation != ramp_operation_generation
+            or rospy.is_shutdown()
+        )
+    if cancelled:
+        rospy.set_param('~status', 'stop')
+        mecnum_pub.publish(Twist())
+        return TriggerResponse(success=False, message='ramp alignment was cancelled')
     linear_speed = 0
     angular_speed = 0
     yaw_angle = 90
@@ -109,7 +127,12 @@ def start_up_callback(msg):
 
     linear_pid.clear()
     angular_pid.clear()
-    start_pick = True
+    with ramp_state_lock:
+        if ramp_cancel_requested or operation_generation != ramp_operation_generation:
+            rospy.set_param('~status', 'stop')
+            mecnum_pub.publish(Twist())
+            return TriggerResponse(success=False, message='ramp alignment was cancelled')
+        start_pick = True
 
     return TriggerResponse(success=True)
 
@@ -120,8 +143,13 @@ def start_down_callback(msg):
     global d_x, d_y
     global pick, place
     global count_turn, count_stop
+    global ramp_cancel_requested, ramp_operation_generation
 
     rospy.loginfo("start pick")
+    with ramp_state_lock:
+        ramp_operation_generation += 1
+        operation_generation = ramp_operation_generation
+        ramp_cancel_requested = False
     rospy.set_param('~status', 'place')
 
     linear_speed = 0
@@ -146,7 +174,12 @@ def start_down_callback(msg):
 
     linear_pid.clear()
     angular_pid.clear()
-    start_pick = True
+    with ramp_state_lock:
+        if ramp_cancel_requested or operation_generation != ramp_operation_generation:
+            rospy.set_param('~status', 'stop')
+            mecnum_pub.publish(Twist())
+            return TriggerResponse(success=False, message='ramp alignment was cancelled')
+        start_pick = True
 
     return TriggerResponse(success=True)
 
@@ -372,6 +405,7 @@ def image_callback(ros_image):
 count = 0
 def ramp_align(image):
     global pick, count_turn, count_stop, angular_speed, linear_speed, status, d_x, d_y, broadcast_status, count, pick_stop_y, pick_stop_x, debug,y_linear_speed,start_pick
+    global ramp_cancel_requested
 
     twist = Twist()
     if not pick or debug:
@@ -459,7 +493,10 @@ def ramp_align(image):
                     twist.angular.z = angular_speed
 
 
-        mecnum_pub.publish(twist)
+        with ramp_state_lock:
+            if not start_pick or ramp_cancel_requested:
+                twist = Twist()
+            mecnum_pub.publish(twist)
     else:
         result_image,object_center_x, object_center_y, object_angle = depth_Detect(image)  # 获取物体颜色的中心和角度
     return result_image
@@ -483,14 +520,46 @@ def calibration_ramp_callback(msg):
 #启动坡道检测
 def start_callback(msg):
     global image_sub 
+    if image_sub is not None:
+        try:
+            image_sub.unregister()
+        except Exception:
+            pass
     image_sub = rospy.Subscriber("/gemini_camera/depth/image_raw", Image, image_callback)
     # image_sub = rospy.Subscriber("/robot_1/gemini_camera/depth/image_raw", Image, image_callback)
     rospy.sleep(2)
     return TriggerResponse(success=True)
 # 关闭坡道检测
 def stop_callback(msg):
-    global image_sub 
-    image_sub.unregister()
+    global image_sub, start_pick, pick, place, stop, status
+    global linear_speed, angular_speed, count_stop, count_turn
+    global ramp_cancel_requested, ramp_operation_generation
+    with ramp_state_lock:
+        ramp_operation_generation += 1
+        ramp_cancel_requested = True
+        start_pick = False
+        pick = False
+        place = False
+        stop = True
+        status = 'approach'
+        linear_speed = 0
+        angular_speed = 0
+        count_stop = 0
+        count_turn = 0
+    linear_pid.clear()
+    angular_pid.clear()
+    yaw_pid.clear()
+    rospy.set_param('~status', 'stop')
+    if image_sub is not None:
+        try:
+            image_sub.unregister()
+        except Exception:
+            pass
+        image_sub = None
+    try:
+        mecnum_pub.publish(Twist())
+    except Exception:
+        pass
     return TriggerResponse(success=True)
 
 if __name__ == '__main__':
