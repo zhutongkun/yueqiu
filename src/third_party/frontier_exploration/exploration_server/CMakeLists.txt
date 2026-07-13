@@ -20,14 +20,18 @@ include_directories(include ${catkin_INCLUDE_DIRS})
 
 add_library(exploration_server src/exploration_server.cpp)
 add_library(example_plugin src/example_plugin.cpp)
+add_dependencies(exploration_server ${catkin_EXPORTED_TARGETS})
+add_dependencies(example_plugin ${catkin_EXPORTED_TARGETS})
 target_link_libraries(exploration_server ${catkin_LIBRARIES})
 
 add_executable(exploration_server_node src/exploration_server_node.cpp)
+add_dependencies(exploration_server_node ${catkin_EXPORTED_TARGETS})
 target_link_libraries(exploration_server_node
   exploration_server ${catkin_LIBRARIES}
 )
 
 add_executable(plugin_client src/plugin_client.cpp)
+add_dependencies(plugin_client ${catkin_EXPORTED_TARGETS})
 target_link_libraries(plugin_client
   exploration_server ${catkin_LIBRARIES}
 )
