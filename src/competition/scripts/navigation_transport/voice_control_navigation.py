@@ -2098,13 +2098,20 @@ class VoiceControlNavNode(MissionLifecycle):
             if self.stop_requested or rospy.is_shutdown():
                 return False
         if not playback_succeeded:
-            rospy.logerr('one or more result announcements failed at the base')
-            return False
+            rospy.logerr(
+                'one or more result announcements failed at the base; '
+                'keeping the completed mission stopped instead of re-entering ERROR'
+            )
         if not self.mark_announced():
             return False
         self.save_mission_results()
         # The 2026 rules separately require this exact base-completion phrase.
-        return self.play('mission_completed', deadline=announcement_deadline)
+        if not self.play('mission_completed', deadline=announcement_deadline):
+            rospy.logerr(
+                'mission completion voice playback failed after result announcements; '
+                'mission remains complete and the robot stays stopped'
+            )
+        return True
 
     def _run_initial_departure(self):
         if not self._restart_yolo():

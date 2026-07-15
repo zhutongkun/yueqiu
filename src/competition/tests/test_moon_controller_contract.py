@@ -246,6 +246,20 @@ class ControllerContractTests(unittest.TestCase):
         self.assertIn('self.stop_requested', method_source)
         self.assertIn('playback_succeeded', method_source)
 
+    def test_announcement_audio_failure_does_not_abort_completed_mission(self):
+        method_source = ast.get_source_segment(
+            self.source, self.methods['announce_all_task_results_at_base']
+        )
+        playback_failure = method_source.index('if not playback_succeeded:')
+        mark_announced = method_source.index('if not self.mark_announced():')
+        self.assertLess(playback_failure, mark_announced)
+        self.assertNotIn(
+            "if not playback_succeeded:\n            rospy.logerr('one or more result announcements failed at the base')\n            return False",
+            method_source,
+        )
+        self.assertIn('mission remains complete and the robot stays stopped', method_source)
+        self.assertTrue(method_source.rstrip().endswith('return True'))
+
     def test_non_slope_original_back_and_lateral_finish_are_preserved(self):
         method_source = ast.get_source_segment(
             self.source, self.methods['_prepare_remaining_tasks']
