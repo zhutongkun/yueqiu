@@ -77,8 +77,20 @@ class LaunchAndConfigContractTests(unittest.TestCase):
         self.assertNotIn('enable_voice:', source(DETECTOR_CONFIG))
         main_launch = source(MAIN_LAUNCH)
         self.assertIn('/competition_mission/enable_voice', main_launch)
-        self.assertIn("arg('enable_voice') != 'false'", main_launch)
+        self.assertIn("str(arg('enable_voice')).lower() == 'false'", main_launch)
+        self.assertIn('<include unless=', main_launch)
         self.assertIn('competition)/launch/mic_init.launch', main_launch)
+
+    def test_start_window_opens_only_after_yolo_prewarm(self):
+        mission_config = source(MISSION_CONFIG)
+        self.assertIn('prewarm_yolo_before_start: true', mission_config)
+        self.assertGreaterEqual(
+            numeric_config_value(MISSION_CONFIG, 'yolo_prewarm_timeout'),
+            60.0,
+        )
+        main_launch = source(MAIN_LAUNCH)
+        self.assertIn('<arg name="enable_timeout_auto_start" default=""/>', main_launch)
+        self.assertIn('/competition_mission/enable_timeout_auto_start', main_launch)
 
     def test_stage_caps_fit_exactly_inside_the_body_budget(self):
         mission_timeout = numeric_config_value(

@@ -57,6 +57,28 @@ class ControllerContractTests(unittest.TestCase):
         self.assertIn('rospy.Timer', method_source)
         self.assertIn('oneshot=True', method_source)
 
+    def test_yolo_is_prewarmed_before_start_inputs_are_enabled(self):
+        init_source = ast.get_source_segment(self.source, self.methods['__init__'])
+        prewarm = init_source.index('self._prewarm_yolo_for_mission()')
+        voice_subscriber = init_source.index("'/asr_node/voice_words'", prewarm)
+        initialization_complete = init_source.index(
+            'self.initialization_complete = True', voice_subscriber
+        )
+        start_timer = init_source.index('self.schedule_start_timeout()', prewarm)
+        self.assertLess(prewarm, voice_subscriber)
+        self.assertLess(voice_subscriber, initialization_complete)
+        self.assertLess(initialization_complete, start_timer)
+
+    def test_yolo_prewarm_keeps_the_loaded_engine_paused(self):
+        method_source = ast.get_source_segment(
+            self.source, self.methods['_prewarm_yolo_for_mission']
+        )
+        start = method_source.index("'/yolov5/start'")
+        stop = method_source.index("'/yolov5/stop'", start)
+        self.assertLess(start, stop)
+        self.assertGreaterEqual(method_source.count('enforce_mission_budget=False'), 2)
+        self.assertIn('self._yolo_preloaded = True', method_source)
+
     def test_voice_enable_parameter_gates_input_and_playback(self):
         self.assertIn("self.enable_voice = bool(self._mission_param('enable_voice', True))", self.source)
         init_source = ast.get_source_segment(

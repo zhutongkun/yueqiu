@@ -28,12 +28,14 @@
     <arg name="moon_publish_debug_image" default=""/>
     <arg name="moon_save_debug_image" default=""/>
     <arg name="enable_voice" default=""/>
+    <arg name="enable_timeout_auto_start" default=""/>
 
     <rosparam file="$(find competition)/config/config.yaml" command="load"/>
     <rosparam file="$(find competition)/config/moon_competition.yaml" command="load" ns="competition_mission"/>
     <param if="$(eval arg('enable_voice') != '')" name="/competition_mission/enable_voice" value="$(arg enable_voice)"/>
+    <param if="$(eval arg('enable_timeout_auto_start') != '')" name="/competition_mission/enable_timeout_auto_start" value="$(arg enable_timeout_auto_start)"/>
     <!-- Empty/default uses YAML=true; an explicit false also avoids claiming audio hardware. -->
-    <include if="$(eval arg('enable_voice') != 'false')" file="$(find competition)/launch/mic_init.launch"/>
+    <include unless="$(eval str(arg('enable_voice')).lower() == 'false')" file="$(find competition)/launch/mic_init.launch"/>
 
     <!--读取地图节点-->
     <include file="$(find competition)/launch/include/load_map.launch">

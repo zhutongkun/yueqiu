@@ -76,15 +76,15 @@
 
 ```text
 python -m unittest discover -s src/competition/tests -p "test_*.py" -v
-Ran 126 tests
+Ran 130 tests
 OK
 ```
 
-126 项由以下部分组成：
+130 项由以下部分组成：
 
 - 4 项资源测试：`best.pt` 大小/SHA256、十类文件顺序、vendored YOLOv5 文件和无嵌套 `.git`、16 个单声道 16-bit PCM WAV。
-- 66 项控制器/检测器/辅助节点契约测试：第三点后原流程、前两点转向及第二点回转、转向先于视觉服务、第二次放置、坡面完成门禁、单次坡面穿越、最终 move_base、统一异常清理、关闭节点、播报顺序、一次性 Timer、统一启动入口、语音开关、手工服务互斥、分层动作超时与阶段取消、迟到服务单次中和、夹取点视觉预热与停车后 `pick`、形状会话缓存清空、支持节点初始化截止、可移植 LAB 配置路径、安全臂等待、禁止运行时 pip 安装、Moon 懒加载/卸载和旧 TensorRT CUDA context 释放竞态/构造失败清理。
-- 15 项部署契约测试：launch/YAML 覆盖优先级、Moon 转向参数、主体七阶段上限合计 390 秒、返航/播报窗口不突破 450 秒、ROS/catkin 依赖、install-space 资产、Python 3.8 门禁、ROS underlay/build tool 选择、固定依赖版本、运行时禁止联网安装和安全停止卸载两个视觉模型。
+- 69 项控制器/检测器/辅助节点契约测试：第三点后原流程、前两点转向及第二点回转、转向先于视觉服务、第二次放置、坡面完成门禁、单次坡面穿越、最终 move_base、统一异常清理、关闭节点、播报顺序、一次性 Timer、统一启动入口、语音开关、比赛启动窗口前 TensorRT 预热、手工服务互斥、分层动作超时与阶段取消、迟到服务单次中和、夹取点视觉预热与停车后 `pick`、形状会话缓存清空、支持节点初始化截止、可移植 LAB 配置路径、安全臂等待、禁止运行时 pip 安装、Moon 懒加载/卸载和旧 TensorRT CUDA context 释放竞态/构造失败清理。
+- 16 项部署契约测试：launch/YAML 覆盖优先级、无运动诊断启动开关、Moon 转向参数、主体七阶段上限合计 390 秒、返航/播报窗口不突破 450 秒、ROS/catkin 依赖、install-space 资产、Python 3.8 门禁、ROS underlay/build tool 选择、固定依赖版本、运行时禁止联网安装和安全停止卸载两个视觉模型。
 - 34 项 ROS 无关核心测试：启动竞争、终态拒绝、三个结果、返航/播报 one-shot、450/390 秒预算与阶段截断、多帧投票、冲突/超时和原子 JSON。
 - 7 项可部署验证工具测试：manifest 十类映射、12 张样本资产、路径边界、严格正样本匹配及 0.70 阈值负样本误报失败。
 
@@ -158,15 +158,40 @@ Moon 数据集已重新实际统计，结果为：
 - 模型文件大小、SHA256、十类顺序和开发机数值推理已有证据。
 - Git for Windows Bash 对五个部署脚本执行 `bash -n` 通过。
 - 主程序、检测节点、核心模块和测试文件 `py_compile` 通过。
-- 自动测试实际运行 126 项，全部通过。
+- 自动测试实际运行 130 项，全部通过。
 - 30 秒实时重复启动回归通过，完成态和执行次数保持不变。
 - 任务启动后的硬截止为 450 秒，主体截止为 390 秒；返航最多使用随后 40 秒，最后 20 秒留给基地播报。所有阶段和内部等待均受更短截止约束。
 - 两次夹取均在夹取导航点调用 `/shape_recognition/start` 预热，最后靠近后再次停车才调用 `/shape_recognition/pick`；用户日志中的 `place_3 -> pick2 -> safe_pick` 是两个连续任务，不是放置动作启动识别。
 - 主比赛 launch、Moon detector launch 和 `package.xml` XML 解析通过。
 - 使用隔离在临时目录中的 PyYAML 6.0.3 实际解析 `moon_detector.yaml` 和 `moon_competition.yaml` 通过；没有修改系统 Python 或项目依赖。
-- 当前不能宣称 catkin 编译、Jetson CUDA 推理、TensorRT、真实导航、机械臂或音频通过。
+- 已在目标 Orin Nano 的 `/home/ubuntu/ros_ws` 运行 `catkin build competition -j4 -l4`，10 个依赖包和 competition 全部成功；旧三分类 TensorRT engine 加载、Astra 图像订阅、服务启动/暂停和短时推理循环通过。
+- Moon 十分类真实卡片推理、完整导航、机械臂全流程、坡面、基地返航和最终音频仍需比赛场地实机确认。
 
-## 7. 实机测试记录模板
+## 7. 2026-07-15 Orin Nano 启动故障回归
+
+目标机为 NVIDIA Jetson Orin Nano Developer Kit、JetPack 5.1.3、L4T 35.5.0、ROS Noetic，真实工作空间为 `/home/ubuntu/ros_ws`。故障运行中，主控已输出等待单次启动触发，15 秒 Timer 接受启动后在 `initial departure` 第一行同步调用 `/yolov5/start`；配置只允许 12 秒，而旧 `shape_models.engine` 首次加载仍在初始化 cuBLAS/cuDNN，随后主控将其误判为初始驶离失败并进入 ERROR。后续视觉 stop/unload 警告是取消清理的连锁结果，不是最初根因。
+
+修复后，主控在订阅开始语音、设置 `initialization_complete` 和创建 15 秒一次性 Timer 之前调用 `/yolov5/start`，最多等待 90 秒；加载成功后立即调用 `/yolov5/stop` 暂停推理，但保留 engine、CUDA context 和相机订阅。只有看到 `YOLOv5 TensorRT prewarm complete; the one-shot start window is now enabled` 后，语音/Timer 启动窗口才开始，因此预热时间不进入 450 秒比赛任务预算。
+
+两次无运动 probe 均使用：
+
+```bash
+roslaunch competition position_correction_pick.launch \
+  enable_timeout_auto_start:=false enable_voice:=false
+```
+
+实测证据：
+
+- 第一次 probe：`1784126820.948` 开始预热，`1784126825.544` 完成，随后 `1784126827.568` 进入 `WAITING_FOR_START`；`mission_execution_count=0`。
+- 第二次 probe：`1784127203.598` 开始预热，`1784127208.395` 完成，随后 `1784127208.555` 进入等待；自动启动参数为 false，任务执行次数保持 0。
+- RViz 1.14.25 成功使用 NVIDIA Tegra Orin OpenGL 4.6 启动，没有 OpenGL/Qt 崩溃。
+- 预热后再次调用 `/yolov5/start` 返回 `success: True`，`rosnode ping /yolov5` 正常，连续 6 秒相机推理没有 `yolov5 inference failed`、CUDA exception 或 traceback；镜头无三分类卡片时 `/yolov5/shape=None` 属于正确空结果。
+- `enable_voice:=false` 现在不会再错误包含 `awake_node`、`asr_node` 和 `voice_control`；该开关只用于安全诊断，正式比赛默认仍启用语音。
+- 测试结束后已调用停止接口、发布零速度并清理全部 ROS 进程，`start_app_node.service` 保持 inactive。
+
+旧三分类 engine 仍打印“跨设备使用 engine plan 不推荐”。仓库和目标机没有找到该 engine 对应的 ONNX/WTS/PT 源文件，因此不能在缺少源模型和回归数据时擅自重建。当前证据只证明它在本车成功加载并执行短时推理，不消除 TensorRT 可移植性风险。讯飞日志中的 `11212` 在项目源码中被标注为 license expired；这不会阻止一次性 15 秒自动启动或 `/competition/start_mission` 服务启动，但真实语音识别需要更新合法的离线授权资源后再验收。
+
+## 8. 实机测试记录模板
 
 每次实机运行至少保存：
 

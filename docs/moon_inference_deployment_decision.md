@@ -88,7 +88,7 @@ Moon ZIP 中有 YOLOv5 源码、`best.pt` 和 `last.pt`，没有 ONNX、TensorRT
 
 ## 8. 与原 YOLO 的资源协调
 
-原矿石三分类 YOLO 和 Moon 十分类节点可能竞争 Astra 图像、GPU 显存和 CUDA context。本分支在任务开始时加载原 TensorRT 三分类模型；矿物卡片形状一旦锁定，就调用 `/yolov5/unload`，注销图像订阅、释放 TensorRT device buffers 并 detach 该节点显式创建的 PyCUDA context，本轮比赛不再恢复旧模型。
+原矿石三分类 YOLO 和 Moon 十分类节点可能竞争 Astra 图像、GPU 显存和 CUDA context。本分支在语音/15 秒一次性启动窗口打开前预热原 TensorRT 三分类模型，预热完成后暂停推理但保留已加载资源；矿物卡片形状一旦锁定，就调用 `/yolov5/unload`，注销图像订阅、释放 TensorRT device buffers 并 detach 该节点显式创建的 PyCUDA context，本轮比赛不再恢复旧模型。这样避免把 engine 冷启动时间算进正式任务，也避免在 Moon PyTorch 模型加载时同时持有两个 GPU 模型。
 
 Moon 节点启动时不加载模型，第一次 `/moon_detector/start` 才懒加载 `best.pt`。三个独立会话之间只停止推理会话以避免重复加载；正常完成、stop、error、shutdown 或人工 reset 时调用 `/moon_detector/unload`，取消会话、注销订阅、删除模型并清理 PyTorch 可释放的 CUDA allocator 缓存。PyTorch 进程底层 driver context 未必能在不退出进程时完全消失，因此 Nano 4GB/Orin 的真实回收量必须用 `tegrastats` 实测，不能只凭代码路径宣称显存足够。
 
@@ -96,6 +96,6 @@ Moon 节点启动时不加载模型，第一次 `/moon_detector/start` 才懒加
 
 ## 9. 当前验证边界
 
-已完成：权重大小/哈希、checkpoint 结构和张量检查、OpenCV DNN 数值前向、71 张验证图映射、代理背景测试。
+已完成：权重大小/哈希、checkpoint 结构和张量检查、OpenCV DNN 数值前向、71 张验证图映射、代理背景测试；目标 Orin Nano 上旧三分类 TensorRT engine 预热、Astra 订阅、服务启动/暂停和 6 秒短时推理循环。
 
-未完成且必须上车：原生 PyTorch 加载、Jetson GPU、TensorRT、ROS 图像订阅、相机曝光/距离、持续帧率、`/yolov5/unload` 后显存回收、Moon 三会话显存稳定性和终态卸载。因此当前不能宣称“Jetson 部署通过”或“TensorRT 可用”。
+旧三分类 engine 会警告其 plan 可能来自不同设备型号，且当前没有找到对应 ONNX/WTS/PT 源文件，所以不能擅自重建或宣称可移植性问题已解决。Moon 十分类仍未完成真实卡片原生 PyTorch 推理、三会话显存稳定性、场地背景误报、曝光/距离和终态卸载验证；完整 Jetson 比赛部署仍需实车全流程验收。

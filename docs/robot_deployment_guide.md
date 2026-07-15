@@ -173,6 +173,23 @@ cd "$MOON_WORKSPACE"
 
 主节点等待语音开始命令；15 秒没有收到命令时只自动启动一次。第 14.9 秒语音和 Timer 同时到达时，带锁入口只接受一个请求。
 
+旧三分类 TensorRT engine 会在启动窗口打开前预热。此阶段底盘保持零速度，首次启动可能持续数秒到数十秒；只有依次看到以下日志后，15 秒语音/自动启动计时才开始：
+
+```text
+Preloading YOLOv5 TensorRT before mission start; the robot remains stopped
+YOLOv5 TensorRT prewarm complete; the one-shot start window is now enabled
+Competition controller is waiting for its one start trigger
+```
+
+安全诊断时可完全关闭语音和自动启动，程序只初始化设备、RViz、导航与视觉，不执行比赛动作：
+
+```bash
+roslaunch competition position_correction_pick.launch \
+  enable_timeout_auto_start:=false enable_voice:=false
+```
+
+诊断结束必须 Ctrl+C，并确认无 ROS 进程残留。正式比赛不要传这两个 false 参数。
+
 ## 7. 运行中观测
 
 在另一个终端：

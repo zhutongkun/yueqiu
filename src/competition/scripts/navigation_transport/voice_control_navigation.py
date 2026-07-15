@@ -218,6 +218,12 @@ class VoiceControlNavNode(MissionLifecycle):
         self.yolo_start_timeout = float(
             self._mission_param('yolo_start_timeout', 12.0)
         )
+        self.prewarm_yolo_before_start = bool(
+            self._mission_param('prewarm_yolo_before_start', True)
+        )
+        self.yolo_prewarm_timeout = float(
+            self._mission_param('yolo_prewarm_timeout', 90.0)
+        )
         self.yolo_unload_timeout = float(
             self._mission_param('yolo_unload_timeout', 5.0)
         )
@@ -328,6 +334,7 @@ class VoiceControlNavNode(MissionLifecycle):
         self._shape_pick_prepared = False
         self.vc_sub = None
         self._yolo_unloaded_for_mission = False
+        self._yolo_preloaded = False
 
         self.mecanum_pub = rospy.Publisher(
             '/controller/cmd_vel', Twist, queue_size=1
@@ -379,6 +386,7 @@ class VoiceControlNavNode(MissionLifecycle):
             if self.enable_voice:
                 self._wait_for_voice_initialisation()
             self._wait_for_navigation_initialisation()
+            self._prewarm_yolo_for_mission()
             if self.enable_voice:
                 self.vc_sub = rospy.Subscriber(
                     '/asr_node/voice_words', String, self.words_callback
@@ -637,6 +645,39 @@ class VoiceControlNavNode(MissionLifecycle):
             )
         except rospy.ROSException as exc:
             raise RuntimeError('costmap initialisation timed out: %s' % exc)
+
+    def _prewarm_yolo_for_mission(self):
+        """Load the legacy TensorRT engine before the one-shot start window opens."""
+        if not self.prewarm_yolo_before_start:
+            rospy.logwarn(
+                'YOLOv5 prewarm is disabled; the first mission stage may include '
+                'TensorRT cold-start latency'
+            )
+            return
+        self.safe_stop_robot()
+        rospy.loginfo(
+            'Preloading YOLOv5 TensorRT before mission start; the robot remains stopped'
+        )
+        response = self.call_trigger(
+            '/yolov5/start',
+            timeout=self.yolo_prewarm_timeout,
+            enforce_mission_budget=False,
+        )
+        if response is None or not response.success:
+            message = response.message if response is not None else 'service timed out'
+            raise RuntimeError('YOLOv5 TensorRT prewarm failed: %s' % message)
+        pause_response = self.call_trigger(
+            '/yolov5/stop',
+            timeout=max(2.0, self.shape_stop_timeout),
+            enforce_mission_budget=False,
+        )
+        if pause_response is None or not pause_response.success:
+            raise RuntimeError('YOLOv5 prewarm completed but pause failed')
+        self._yolo_preloaded = True
+        self.safe_stop_robot()
+        rospy.loginfo(
+            'YOLOv5 TensorRT prewarm complete; the one-shot start window is now enabled'
+        )
 
     def schedule_start_timeout(self):
         self.cancel_start_timeout()
