@@ -50,6 +50,7 @@ flowchart TD
 | 导航结果 | goal handle 终态及 `/move_base/result` | 正式等待只接受当前句柄的 `SUCCEEDED`，避免连续目标切换时 `SimpleActionClient` 跟踪竞态 |
 | 底盘速度 | `/controller/cmd_vel`，`geometry_msgs/Twist` | 主程序、对齐节点和坡面节点均可能发布；`move_base` 也重映射到该话题 |
 | 里程计/雷达 | `/odom`、`/scan` | 主程序用于航向、距离和返坡激光纠偏 |
+| 姿态与斜坡绕行 | `/imu`，`sensor_msgs/Imu` | 以启动时重力方向消除传感器安装角；普通导航异常倾斜时取消当前 goal、反向退出并重试，不设置整场 stop |
 | 机械臂 | `/servo_controllers/port_id_1/multi_id_pos_dur` | 总线舵机动作；夹取还调用运动学服务 |
 | 对齐/放置 | `/position_correction/start`、`pick_1`、`pick_2`、`place_3` 等 | `automatic_pick.py` 提供，状态参数为 `/position_correction/status` |
 | 形状夹取 | `/shape_recognition/start`、`pick`、`stop`/`close` | `shape_recognition_down.py` 使用 Gemini RGB、深度和相机内参 |
@@ -65,8 +66,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    S["等待语音开始命令或 15 秒自动启动"] --> D0["驶离基地并进入导航"]
-    D0 --> D1["导航至资源库/目标确认点"]
+    S["等待语音开始命令或 15 秒自动启动"] --> D0["保留原始前进和原地转向"]
+    D0 --> SAFE0["经过负 Y 侧斜坡绕行点"]
+    SAFE0 --> D1["导航至资源库/目标确认点"]
     D1 --> TGT["识别矿石卡片并设置目标形状"]
     TGT --> M1["任务点 1：月球场景元素卡片识别，仅保存"]
     M1 --> P1["导航至采集平台 1、对齐并夹取"]

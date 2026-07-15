@@ -77,15 +77,15 @@
 
 ```text
 python -m unittest discover -s src/competition/tests -p "test_*.py" -v
-Ran 140 tests
+Ran 148 tests
 OK
 ```
 
-140 项由以下部分组成：
+148 项由以下部分组成：
 
 - 4 项资源测试：`best.pt` 大小/SHA256、十类文件顺序、vendored YOLOv5 文件和无嵌套 `.git`、16 个单声道 16-bit PCM WAV。
-- 75 项控制器/检测器/辅助节点契约测试：第三点后原流程、前两点转向及第二点回转、转向先于视觉服务、第二次放置、坡面完成门禁、单次坡面穿越、最终 move_base、逐目标 goal handle、无独立路径超时、统一异常清理、关闭节点、播报顺序、一次性 Timer、统一启动入口、语音开关、比赛启动窗口前两个模型的预热、ROS 参数可序列化失败结果、跨平台 pathlib checkpoint 兼容、手工服务互斥、任务阶段截止、夹取点视觉预热与停车后 `pick`、禁止运行时 pip 安装和视觉资源卸载。
-- 20 项部署契约测试：launch/YAML 覆盖优先级、Moon CPU 默认设备、启动窗口前预加载、移除路径级超时、ROS setup 的 nounset 兼容、主动加载 `.typerc` 硬件环境、无运动诊断启动开关、Moon 转向参数、主体七阶段上限合计 390 秒、返航/播报窗口不突破 450 秒、ROS/catkin 依赖、install-space 资产、Python 3.8 门禁、ROS underlay/build tool 选择、固定依赖版本、运行时禁止联网安装和安全停止卸载两个视觉模型。
+- 82 项控制器/检测器/辅助节点契约测试：第三点后原流程、前两点转向及第二点回转、转向先于视觉服务、第二次放置、坡面完成门禁、单次坡面穿越、最终 move_base、逐目标 goal handle、无独立路径超时、斜坡绕行点、相对重力倾角、反向退出和导航重试、统一异常清理、关闭节点、播报顺序、一次性 Timer、统一启动入口、语音开关、比赛启动窗口前两个模型的预热、ROS 参数可序列化失败结果、跨平台 pathlib checkpoint 兼容、手工服务互斥、任务阶段截止、夹取点视觉预热与停车后 `pick`、禁止运行时 pip 安装和视觉资源卸载。
+- 21 项部署契约测试：launch/YAML 覆盖优先级、Moon CPU 默认设备、启动窗口前预加载、移除路径级超时、ROS setup 的 nounset 兼容、主动加载 `.typerc` 硬件环境、无运动诊断启动开关、Moon 转向参数、斜坡绕行和反向恢复配置、主体七阶段上限合计 390 秒、返航/播报窗口不突破 450 秒、ROS/catkin 依赖、install-space 资产、Python 3.8 门禁、ROS underlay/build tool 选择、固定依赖版本、运行时禁止联网安装和安全停止卸载两个视觉模型。
 - 34 项 ROS 无关核心测试：启动竞争、终态拒绝、三个结果、返航/播报 one-shot、450/390 秒预算与阶段截断、多帧投票、冲突/超时和原子 JSON。
 - 7 项可部署验证工具测试：manifest 十类映射、12 张样本资产、路径边界、严格正样本匹配及 0.70 阈值负样本误报失败。
 
@@ -159,7 +159,7 @@ Moon 数据集已重新实际统计，结果为：
 - 模型文件大小、SHA256、十类顺序和开发机数值推理已有证据。
 - Git for Windows Bash 对五个部署脚本执行 `bash -n` 通过。
 - 主程序、检测节点、核心模块和测试文件 `py_compile` 通过。
-- 自动测试在开发机和目标机分别实际运行 140 项，全部通过。
+- 自动测试在开发机和目标机分别实际运行 148 项，全部通过。
 - 30 秒实时重复启动回归通过，完成态和执行次数保持不变。
 - 任务启动后的硬截止为 450 秒，主体截止为 390 秒；返航最多使用随后 40 秒，最后 20 秒留给基地播报。所有阶段和内部等待均受更短截止约束。
 - 两次夹取均在夹取导航点调用 `/shape_recognition/start` 预热，最后靠近后再次停车才调用 `/shape_recognition/pick`；用户日志中的 `place_3 -> pick2 -> safe_pick` 是两个连续任务，不是放置动作启动识别。
@@ -218,7 +218,7 @@ roslaunch competition position_correction_pick.launch \
 - CPU 模型加载约 6.371-9.494 秒；640x640 推理平均 0.840 秒/帧、最大 0.936 秒/帧；预加载后的 `/moon_detector/start` 约 1.523 秒。
 - GPU 首次加载约 89.5 秒；与旧 TensorRT 同时驻留时约使用 6.0/7.3 GiB 内存、只剩约 940 MiB 可用并使用约 496 MiB swap，所以默认改为 CPU。
 - `/moon_detector/preload/start/stop/unload` 全部返回成功；修复后日志中没有再次出现 `pathlib._local`、`cannot marshal None` 或 Moon model load failure。
-- 目标机 140 项自动测试全部通过；`catkin build competition -j4 -l4` 的 10 个相关包全部成功。
+- 目标机 148 项自动测试全部通过；`catkin build competition -j4 -l4` 的 10 个相关包全部成功。
 - probe 由测试超时主动终止，随后确认无 ROS 残留进程，`start_app_node.service` 保持 inactive。
 
 这次回归证明节点可以完成安全初始化和识别服务启动，不等于完整比赛验收。十类真实卡片、三个现场识别点、完整驾驶/机械臂/坡面、基地返航和离线播报仍需实车确认。
@@ -243,9 +243,27 @@ competition mission aborted: second pick stage failed
 - `setup/run/stop` 脚本 source ROS 前临时关闭 nounset，修复干净 SSH shell 中 `ROS_DISTRO: unbound variable` 导致安全停止提前退出的问题。
 - `run_moon_competition.sh` 主动加载并校验工作空间 `.typerc`，干净 SSH shell 不再因缺少 `ROBOT_HOST`、`MACHINE_TYPE` 等硬件变量而发生 launch XML 解析失败。
 
-开发机和目标机的 Python 语法、shell `bash -n` 与 140 项自动测试均已通过；目标机 `catkin build competition -j4 -l4` 的 10 个包全部成功。关闭语音和自动启动的无运动 launch 已到达中文就绪横幅，没有 actionlib 初始化或未跟踪句柄错误。下一轮完整第二夹取、第三次识别及剩余比赛任务仍需实车复测。
+开发机和目标机的 Python 语法、shell `bash -n` 与 148 项自动测试均已通过；目标机 `catkin build competition -j4 -l4` 的 10 个包全部成功。关闭语音和自动启动的无运动 launch 已到达中文就绪横幅，没有 actionlib 初始化或未跟踪句柄错误。下一轮完整第二夹取、第三次识别及剩余比赛任务仍需实车复测。
 
-## 10. 实机测试记录模板
+## 10. 起点斜坡绕行与反向恢复回归
+
+用户确认原始起步的 `linear_x=0.3, duration=3.0` 和 `angular_z=-0.5, duration=3.0` 位置正确，因此这两段动作保持原样。风险来自原地转向之后的普通 `move_base` 路径：起点旁的低斜坡没有进入二维占据地图，激光可能把坡面当成可通行地面。
+
+本次增量加入三个负 Y 侧绕行点：原地转向后先经过 `(0.9, -0.7, -90°)`，每次放置前先经过 `(1.45, -0.75, 90°)`，离开放置区前往第二次夹取时先经过 `(1.45, -0.75, -90°)`。最终资源识别、夹取和放置目标坐标未修改。
+
+目标车实测 `/imu` 静止原始姿态约为 `roll=167.30°`、`pitch=2.06°`，这是传感器安装方向，不能直接使用绝对 Roll/Pitch 阈值。控制器现以启动时的重力向量为基准，计算与偏航无关的相对倾角。无运动 launch 日志确认：
+
+```text
+Tilt reference captured from mounted IMU: raw_roll=167.30 raw_pitch=2.06
+Tilt guard armed relative to startup gravity: roll_delta=0.00 deg pitch_delta=0.00 deg tilt=0.00 deg limit=8.0 deg
+系统启动完成：导航、机械臂和视觉模块已就绪，小车当前保持停车
+```
+
+普通导航若连续检测到异常倾角，不设置 `stop_requested`，而是取消当前 goal，按最近一次非零 `/controller/cmd_vel` 的反方向以 0.12 m/s 退出；缺少新鲜速度命令时固定向地图负 Y 侧退出。相对倾角回到 5°以内后重新发送原导航目标，单个目标最多恢复两次。受控的原始起步和最终返坡使用 25°较高阈值，避免正常坡面动作误触发。
+
+开发机和目标机 148 项测试全部通过，其中纯算法测试确认重力向量倾角不受纯偏航影响、10° Roll 能得到 10°倾角；目标机 `catkin build competition -j4 -l4` 的 10 个包全部成功。带图形显示、关闭语音和自动启动的无运动 launch 已完成 `/imu` 初始化、两个视觉模型预热并到达中文就绪横幅。新的绕行轨迹和真实斜坡反向退出没有在无人看护情况下驱动车体测试，必须由操作者现场看护完成。
+
+## 11. 实机测试记录模板
 
 每次实机运行至少保存：
 

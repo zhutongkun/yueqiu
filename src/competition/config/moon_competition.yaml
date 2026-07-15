@@ -54,6 +54,37 @@ voice_volume: 100
 use_ramp_alignment_service: false
 enable_manual_debug_services: true
 
+# The ramp is invisible in the 2D occupancy map. Unexpected tilt cancels only the
+# current goal, drives opposite to the latest motion, and then retries navigation.
+enable_tilt_guard: true
+imu_topic: "/imu"
+unexpected_tilt_limit_degrees: 8.0
+controlled_ramp_tilt_limit_degrees: 25.0
+tilt_violation_samples: 5
+tilt_recovery_speed: 0.12
+tilt_recovery_timeout: 3.0
+tilt_recovery_min_duration: 0.6
+tilt_recovery_level_degrees: 5.0
+tilt_recovery_level_samples: 3
+tilt_recovery_max_attempts: 2
+tilt_command_max_age: 0.75
+
+# Keep the original open-loop departure and turn. These waypoints constrain all
+# later move_base routes to the flat negative-Y side of the starting ramp.
+enable_ramp_clearance_waypoints: true
+departure_ramp_clearance_pose:
+  x: 0.9
+  y: -0.7
+  yaw: -90.0
+place_ramp_clearance_pose:
+  x: 1.45
+  y: -0.75
+  yaw: 90.0
+pick_ramp_clearance_pose:
+  x: 1.45
+  y: -0.75
+  yaw: -90.0
+
 # These poses must be checked against the final competition map on the robot.
 base_pose:
   x: 0.0

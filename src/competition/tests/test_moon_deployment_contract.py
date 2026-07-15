@@ -108,6 +108,28 @@ class LaunchAndConfigContractTests(unittest.TestCase):
         self.assertNotIn('return_navigation_timeout:', mission_config)
         self.assertIn('move_base_server_timeout:', mission_config)
 
+    def test_ramp_clearance_and_reverse_tilt_recovery_are_configured(self):
+        mission_config = source(MISSION_CONFIG)
+        for key in (
+            'enable_tilt_guard: true',
+            'imu_topic: "/imu"',
+            'unexpected_tilt_limit_degrees:',
+            'controlled_ramp_tilt_limit_degrees:',
+            'tilt_recovery_speed:',
+            'tilt_recovery_timeout:',
+            'tilt_recovery_max_attempts:',
+            'enable_ramp_clearance_waypoints: true',
+            'departure_ramp_clearance_pose:',
+            'place_ramp_clearance_pose:',
+            'pick_ramp_clearance_pose:',
+        ):
+            self.assertIn(key, mission_config)
+        self.assertLessEqual(
+            numeric_config_value(MISSION_CONFIG, 'tilt_recovery_speed'), 0.12
+        )
+        self.assertNotIn('initial_ramp_departure_distance:', mission_config)
+        self.assertNotIn('ramp_return_max_distance:', mission_config)
+
     def test_stage_caps_fit_exactly_inside_the_body_budget(self):
         mission_timeout = numeric_config_value(
             MISSION_CONFIG, 'mission_timeout_seconds'

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import ast
+import math
 import pathlib
 import unittest
 
@@ -377,6 +378,114 @@ class ControllerContractTests(unittest.TestCase):
         ):
             self.assertIn("'%s'" % stage_name, method_source)
         self.assertGreaterEqual(method_source.count('self._run_timed_stage('), 9)
+
+    def test_initial_departure_keeps_the_original_forward_and_turn(self):
+        departure_source = ast.get_source_segment(
+            self.source, self.methods['_run_initial_departure']
+        )
+        forward = departure_source.index(
+            'self._drive_for(linear_x=0.3, duration=3.0)'
+        )
+        turn = departure_source.index(
+            'self._drive_for(angular_z=-0.5, duration=3.0)', forward
+        )
+        self.assertLess(forward, turn)
+        self.assertIn('self._set_controlled_ramp_motion(True)', departure_source)
+        self.assertIn('self._set_controlled_ramp_motion(False)', departure_source)
+
+    def test_later_navigation_uses_ramp_clearance_waypoints(self):
+        method_source = ast.get_source_segment(self.source, self.methods['control'])
+        generic_navigation = method_source.index(
+            'self.navigate_and_wait(x, y, yaw)'
+        )
+        departure_clearance = method_source.index(
+            'self.departure_ramp_clearance_pose'
+        )
+        place_clearance = method_source.index('self.place_ramp_clearance_pose')
+        pick_clearance = method_source.index('self.pick_ramp_clearance_pose')
+        second_pick_target = method_source.index(
+            'self.navigate_and_wait(0.94, -3.17, navigation_yaw)'
+        )
+        self.assertLess(departure_clearance, generic_navigation)
+        self.assertLess(place_clearance, generic_navigation)
+        self.assertLess(pick_clearance, second_pick_target)
+
+    def test_tilt_guard_requests_reverse_escape_without_stopping_the_mission(self):
+        callback_source = ast.get_source_segment(
+            self.source, self.methods['imu_callback']
+        )
+        self.assertIn('self.unexpected_tilt_limit_degrees', callback_source)
+        self.assertIn('self.controlled_ramp_tilt_limit_degrees', callback_source)
+        self.assertIn('vector_angle_degrees', callback_source)
+        self.assertIn('if tilt > limit:', callback_source)
+        self.assertIn('self._tilt_recovery_requested.set()', callback_source)
+        self.assertIn('self.move_base_client.cancel_all_goals()', callback_source)
+        self.assertNotIn('self.stop_requested = True', callback_source)
+        self.assertNotIn('self.cancel_navigation_and_stop()', callback_source)
+
+    def test_gravity_vector_tilt_ignores_yaw_and_detects_roll(self):
+        tree = ast.parse(self.source, filename=str(CONTROLLER_PATH))
+        helper_names = {'quaternion_gravity_vector', 'vector_angle_degrees'}
+        helper_nodes = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name in helper_names
+        ]
+        namespace = {'math': math}
+        module = ast.Module(body=helper_nodes, type_ignores=[])
+        ast.fix_missing_locations(module)
+        exec(compile(module, str(CONTROLLER_PATH), 'exec'), namespace)
+
+        class Quaternion:
+            pass
+
+        def quaternion(x=0.0, y=0.0, z=0.0, w=1.0):
+            value = Quaternion()
+            value.x, value.y, value.z, value.w = x, y, z, w
+            return value
+
+        gravity = namespace['quaternion_gravity_vector']
+        angle = namespace['vector_angle_degrees']
+        reference = gravity(quaternion())
+        yaw_only = gravity(
+            quaternion(z=math.sin(math.radians(45.0)), w=math.cos(math.radians(45.0)))
+        )
+        roll_ten = gravity(
+            quaternion(x=math.sin(math.radians(5.0)), w=math.cos(math.radians(5.0)))
+        )
+        self.assertAlmostEqual(0.0, angle(reference, yaw_only), places=6)
+        self.assertAlmostEqual(10.0, angle(reference, roll_ten), places=6)
+
+    def test_tilt_recovery_moves_opposite_and_navigation_retries(self):
+        escape_source = ast.get_source_segment(
+            self.source, self.methods['_opposite_tilt_escape_twist']
+        )
+        recovery_source = ast.get_source_segment(
+            self.source, self.methods['_recover_from_unexpected_tilt']
+        )
+        navigation_source = ast.get_source_segment(
+            self.source, self.methods['navigate_and_wait']
+        )
+        self.assertIn('escape_x = -linear_x / magnitude * speed', escape_source)
+        self.assertIn('escape_y = -linear_y / magnitude * speed', escape_source)
+        self.assertIn('mission remains active', recovery_source)
+        self.assertNotIn('self.stop_requested = True', recovery_source)
+        self.assertIn('self.tilt_recovery_max_attempts', navigation_source)
+        self.assertIn('Resending navigation goal after reverse escape', navigation_source)
+
+    def test_ramp_return_uses_controlled_tilt_mode_and_cancels_all_goals(self):
+        method_source = ast.get_source_segment(
+            self.source, self.methods['reverse_up_ramp_with_laser']
+        )
+        self.assertIn('self.move_base_client.cancel_all_goals()', method_source)
+        self.assertIn('self._set_controlled_ramp_motion(True)', method_source)
+        self.assertIn('if traveled >= distance:', method_source)
+        self.assertNotIn('self.ramp_return_max_distance', method_source)
+
+    def test_legacy_open_loop_ramp_debug_motion_is_preserved(self):
+        control_source = ast.get_source_segment(self.source, self.methods['control'])
+        self.assertIn('duration=self.up_ramp_time', control_source)
+        self.assertIn('self.run_ramp_alignment()', control_source)
 
     def test_stage_timeout_sets_cancellation_before_returning(self):
         method_source = ast.get_source_segment(

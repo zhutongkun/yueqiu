@@ -19,7 +19,7 @@ from geometry_msgs.msg import Pose, PoseStamped, Twist
 from move_base_msgs.msg import MoveBaseAction, MoveBaseActionResult, MoveBaseGoal
 from nav_msgs.msg import OccupancyGrid, Odometry
 from ros_robot_controller.msg import BuzzerState
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Imu, LaserScan
 from servo_controllers import bus_servo_control
 from servo_msgs.msg import MultiRawIdPosDur
 from std_msgs.msg import Bool, String
@@ -103,6 +103,61 @@ def rpy2qua(roll, pitch, yaw):
     return pose.orientation
 
 
+def quaternion_roll_pitch_degrees(quaternion):
+    sinr_cosp = 2.0 * (
+        quaternion.w * quaternion.x + quaternion.y * quaternion.z
+    )
+    cosr_cosp = 1.0 - 2.0 * (
+        quaternion.x * quaternion.x + quaternion.y * quaternion.y
+    )
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+    sinp = 2.0 * (
+        quaternion.w * quaternion.y - quaternion.z * quaternion.x
+    )
+    pitch = math.copysign(math.pi / 2.0, sinp) if abs(sinp) >= 1.0 else math.asin(sinp)
+    return math.degrees(roll), math.degrees(pitch)
+
+
+def quaternion_yaw_radians(quaternion):
+    siny_cosp = 2.0 * (
+        quaternion.w * quaternion.z + quaternion.x * quaternion.y
+    )
+    cosy_cosp = 1.0 - 2.0 * (
+        quaternion.y * quaternion.y + quaternion.z * quaternion.z
+    )
+    return math.atan2(siny_cosp, cosy_cosp)
+
+
+def quaternion_gravity_vector(quaternion):
+    norm = math.sqrt(
+        quaternion.x * quaternion.x
+        + quaternion.y * quaternion.y
+        + quaternion.z * quaternion.z
+        + quaternion.w * quaternion.w
+    )
+    if norm <= 1e-9:
+        raise ValueError('IMU orientation quaternion has zero length')
+    x = quaternion.x / norm
+    y = quaternion.y / norm
+    z = quaternion.z / norm
+    w = quaternion.w / norm
+    return (
+        2.0 * (x * z - w * y),
+        2.0 * (y * z + w * x),
+        w * w - x * x - y * y + z * z,
+    )
+
+
+def vector_angle_degrees(first, second):
+    dot = sum(left * right for left, right in zip(first, second))
+    dot = max(-1.0, min(1.0, dot))
+    return math.degrees(math.acos(dot))
+
+
+def wrapped_angle_delta_degrees(value, reference):
+    return (value - reference + 180.0) % 360.0 - 180.0
+
+
 class VoiceControlNavNode(MissionLifecycle):
     def __init__(self, name):
         rospy.init_node(name)
@@ -117,6 +172,24 @@ class VoiceControlNavNode(MissionLifecycle):
         self.current_pose_received = False
         self.left_rear_dist = 2.0
         self.right_rear_dist = 2.0
+        self._tilt_lock = threading.Lock()
+        self.imu_received = False
+        self.tilt_reference_ready = False
+        self._tilt_reference_roll_degrees = 0.0
+        self._tilt_reference_pitch_degrees = 0.0
+        self._tilt_reference_gravity = (0.0, 0.0, 1.0)
+        self.current_roll_degrees = 0.0
+        self.current_pitch_degrees = 0.0
+        self.current_tilt_degrees = 0.0
+        self._controlled_ramp_motion = False
+        self._tilt_violation_count = 0
+        self._tilt_fault = False
+        self._tilt_recovery_requested = threading.Event()
+        self._tilt_recovery_active = False
+        self._command_lock = threading.Lock()
+        self._last_motion_linear_x = 0.0
+        self._last_motion_linear_y = 0.0
+        self._last_motion_command_time = 0.0
         self.language = os.environ.get('ASR_LANGUAGE', 'Chinese')
 
         self.pick_location_time = rospy.get_param('/pick_location_time', 3)
@@ -261,12 +334,60 @@ class VoiceControlNavNode(MissionLifecycle):
         self.enable_manual_debug_services = bool(
             self._mission_param('enable_manual_debug_services', True)
         )
+        self.enable_tilt_guard = bool(
+            self._mission_param('enable_tilt_guard', True)
+        )
+        self.imu_topic = str(
+            self._mission_param('imu_topic', '/imu')
+        )
+        self.unexpected_tilt_limit_degrees = float(
+            self._mission_param('unexpected_tilt_limit_degrees', 8.0)
+        )
+        self.controlled_ramp_tilt_limit_degrees = float(
+            self._mission_param('controlled_ramp_tilt_limit_degrees', 25.0)
+        )
+        self.tilt_violation_samples = max(
+            1, int(self._mission_param('tilt_violation_samples', 5))
+        )
+        self.tilt_recovery_speed = abs(
+            float(self._mission_param('tilt_recovery_speed', 0.12))
+        )
+        self.tilt_recovery_timeout = float(
+            self._mission_param('tilt_recovery_timeout', 3.0)
+        )
+        self.tilt_recovery_min_duration = float(
+            self._mission_param('tilt_recovery_min_duration', 0.6)
+        )
+        self.tilt_recovery_level_degrees = float(
+            self._mission_param('tilt_recovery_level_degrees', 5.0)
+        )
+        self.tilt_recovery_level_samples = max(
+            1, int(self._mission_param('tilt_recovery_level_samples', 3))
+        )
+        self.tilt_recovery_max_attempts = max(
+            1, int(self._mission_param('tilt_recovery_max_attempts', 2))
+        )
+        self.tilt_command_max_age = float(
+            self._mission_param('tilt_command_max_age', 0.75)
+        )
+        self.enable_ramp_clearance_waypoints = bool(
+            self._mission_param('enable_ramp_clearance_waypoints', True)
+        )
 
         self.base_pose = self._pose_param(
             'base_pose', {'x': 0.0, 'y': 0.0, 'yaw': 0.0}
         )
         self.ramp_approach_pose = self._pose_param(
             'ramp_approach_pose', {'x': 1.3, 'y': 0.0, 'yaw': 0.0}
+        )
+        self.departure_ramp_clearance_pose = self._pose_param(
+            'departure_ramp_clearance_pose', {'x': 0.9, 'y': -0.7, 'yaw': -90.0}
+        )
+        self.place_ramp_clearance_pose = self._pose_param(
+            'place_ramp_clearance_pose', {'x': 1.45, 'y': -0.75, 'yaw': 90.0}
+        )
+        self.pick_ramp_clearance_pose = self._pose_param(
+            'pick_ramp_clearance_pose', {'x': 1.45, 'y': -0.75, 'yaw': -90.0}
         )
         self.ramp_return_distance = float(
             self._mission_param('ramp_return_distance', 1.3)
@@ -373,6 +494,8 @@ class VoiceControlNavNode(MissionLifecycle):
         rospy.Subscriber('/move_base/result', MoveBaseActionResult, self.move_callback)
         rospy.Subscriber('/scan', LaserScan, self.scan_callback)
         rospy.Subscriber('/odom', Odometry, self.odom_callback)
+        rospy.Subscriber('/controller/cmd_vel', Twist, self.cmd_vel_callback)
+        rospy.Subscriber(self.imu_topic, Imu, self.imu_callback)
         rospy.Subscriber('/moon_detector/result', String, self.moon_result_callback)
         rospy.Subscriber('/moon_detector/finished', Bool, self.moon_finished_callback)
 
@@ -644,6 +767,28 @@ class VoiceControlNavNode(MissionLifecycle):
             )
         except rospy.ROSException as exc:
             raise RuntimeError('costmap initialisation timed out: %s' % exc)
+        if self.enable_tilt_guard:
+            try:
+                imu_message = rospy.wait_for_message(
+                    self.imu_topic, Imu, timeout=self.initialization_timeout
+                )
+                self._set_tilt_reference(imu_message)
+            except rospy.ROSException as exc:
+                raise RuntimeError('tilt-guard IMU initialisation timed out: %s' % exc)
+            with self._tilt_lock:
+                if self._tilt_fault:
+                    raise RuntimeError('tilt guard rejected the initial robot attitude')
+                roll = self.current_roll_degrees
+                pitch = self.current_pitch_degrees
+                tilt = self.current_tilt_degrees
+            rospy.loginfo(
+                'Tilt guard armed relative to startup gravity: '
+                'roll_delta=%.2f deg pitch_delta=%.2f deg tilt=%.2f deg limit=%.1f deg',
+                roll,
+                pitch,
+                tilt,
+                self.unexpected_tilt_limit_degrees,
+            )
 
     def _prewarm_yolo_for_mission(self):
         """Load the legacy TensorRT engine before the one-shot start window opens."""
@@ -793,6 +938,16 @@ class VoiceControlNavNode(MissionLifecycle):
         self.navigation_tasks_finished = False
         self.ramp_task_finished = False
         self.other_competition_tasks_finished = False
+        with self._tilt_lock:
+            self._controlled_ramp_motion = False
+            self._tilt_violation_count = 0
+            self._tilt_fault = False
+            self._tilt_recovery_active = False
+        self._tilt_recovery_requested.clear()
+        with self._command_lock:
+            self._last_motion_linear_x = 0.0
+            self._last_motion_linear_y = 0.0
+            self._last_motion_command_time = 0.0
         for task_point_index in (1, 2, 3):
             try:
                 rospy.delete_param('/moon_task/results/%d' % task_point_index)
@@ -991,6 +1146,96 @@ class VoiceControlNavNode(MissionLifecycle):
     def odom_callback(self, msg):
         self.current_pose = msg.pose.pose
         self.current_pose_received = True
+
+    def cmd_vel_callback(self, msg):
+        with self._tilt_lock:
+            if self._tilt_recovery_active:
+                return
+        if math.hypot(msg.linear.x, msg.linear.y) < 0.01:
+            return
+        with self._command_lock:
+            self._last_motion_linear_x = float(msg.linear.x)
+            self._last_motion_linear_y = float(msg.linear.y)
+            self._last_motion_command_time = time.monotonic()
+
+    def _set_tilt_reference(self, msg):
+        roll, pitch = quaternion_roll_pitch_degrees(msg.orientation)
+        gravity = quaternion_gravity_vector(msg.orientation)
+        with self._tilt_lock:
+            self.imu_received = True
+            self.tilt_reference_ready = True
+            self._tilt_reference_roll_degrees = roll
+            self._tilt_reference_pitch_degrees = pitch
+            self._tilt_reference_gravity = gravity
+            self.current_roll_degrees = 0.0
+            self.current_pitch_degrees = 0.0
+            self.current_tilt_degrees = 0.0
+            self._tilt_violation_count = 0
+            self._tilt_fault = False
+        self._tilt_recovery_requested.clear()
+        rospy.loginfo(
+            'Tilt reference captured from mounted IMU: raw_roll=%.2f raw_pitch=%.2f',
+            roll,
+            pitch,
+        )
+
+    def imu_callback(self, msg):
+        try:
+            raw_roll, raw_pitch = quaternion_roll_pitch_degrees(msg.orientation)
+            gravity = quaternion_gravity_vector(msg.orientation)
+        except Exception as exc:
+            rospy.logwarn_throttle(5.0, 'tilt guard IMU conversion failed: %s', exc)
+            return
+
+        trip_guard = False
+        with self._tilt_lock:
+            self.imu_received = True
+            if not self.tilt_reference_ready:
+                return
+            roll = wrapped_angle_delta_degrees(
+                raw_roll, self._tilt_reference_roll_degrees
+            )
+            pitch = wrapped_angle_delta_degrees(
+                raw_pitch, self._tilt_reference_pitch_degrees
+            )
+            tilt = vector_angle_degrees(self._tilt_reference_gravity, gravity)
+            self.current_roll_degrees = roll
+            self.current_pitch_degrees = pitch
+            self.current_tilt_degrees = tilt
+            if (
+                not self.enable_tilt_guard
+                or self._tilt_fault
+                or self._tilt_recovery_active
+                or self._tilt_recovery_requested.is_set()
+            ):
+                return
+            limit = (
+                self.controlled_ramp_tilt_limit_degrees
+                if self._controlled_ramp_motion
+                else self.unexpected_tilt_limit_degrees
+            )
+            if tilt > limit:
+                self._tilt_violation_count += 1
+            else:
+                self._tilt_violation_count = 0
+            if self._tilt_violation_count >= self.tilt_violation_samples:
+                self._tilt_violation_count = 0
+                self._tilt_recovery_requested.set()
+                trip_guard = True
+
+        if trip_guard:
+            rospy.logwarn(
+                'Unexpected tilt detected: roll_delta=%.2f deg '
+                'pitch_delta=%.2f deg tilt=%.2f deg; '
+                'canceling this goal and requesting reverse escape',
+                roll,
+                pitch,
+                tilt,
+            )
+            try:
+                self.move_base_client.cancel_all_goals()
+            except Exception:
+                pass
 
     def move_callback(self, msg):
         try:
@@ -1274,6 +1519,11 @@ class VoiceControlNavNode(MissionLifecycle):
             while not rospy.is_shutdown() and time.monotonic() < motion_deadline:
                 if self.stop_requested:
                     return False
+                if self._tilt_recovery_requested.is_set():
+                    with self._tilt_lock:
+                        controlled_ramp_motion = self._controlled_ramp_motion
+                    recovered = self._recover_from_unexpected_tilt()
+                    return recovered and not controlled_ramp_motion
                 self.mecanum_pub.publish(twist)
                 time.sleep(min(0.05, max(0.0, motion_deadline - time.monotonic())))
             return not self.stop_requested and not rospy.is_shutdown()
@@ -1357,27 +1607,57 @@ class VoiceControlNavNode(MissionLifecycle):
         ):
             rospy.logerr('move_base action server is unavailable')
             return False
-        goal = self.make_move_base_goal(x, y, yaw_degrees)
-        goal_handle = self.move_base_client.send_goal(goal)
+        recovery_attempts = 0
         while not rospy.is_shutdown() and time.monotonic() < navigation_deadline:
-            if self.stop_requested:
-                goal_handle.cancel()
-                self.safe_stop_robot()
-                return False
-            if goal_handle.get_comm_state() == actionlib.CommState.DONE:
-                state = goal_handle.get_goal_status()
-                if state == GoalStatus.SUCCEEDED:
+            if self._tilt_recovery_requested.is_set():
+                if recovery_attempts >= self.tilt_recovery_max_attempts:
+                    rospy.logerr('navigation exceeded its tilt-recovery retry limit')
+                    return False
+                if not self._recover_from_unexpected_tilt():
+                    return False
+                recovery_attempts += 1
+
+            goal = self.make_move_base_goal(x, y, yaw_degrees)
+            goal_handle = self.move_base_client.send_goal(goal)
+            retry_after_recovery = False
+            while not rospy.is_shutdown() and time.monotonic() < navigation_deadline:
+                if self.stop_requested:
+                    goal_handle.cancel()
                     self.safe_stop_robot()
-                    return True
-                rospy.logerr(
-                    'navigation failed with move_base state %s: %s',
-                    state,
-                    goal_handle.get_goal_status_text(),
+                    return False
+                if self._tilt_recovery_requested.is_set():
+                    goal_handle.cancel()
+                    if recovery_attempts >= self.tilt_recovery_max_attempts:
+                        rospy.logerr('navigation exceeded its tilt-recovery retry limit')
+                        return False
+                    if not self._recover_from_unexpected_tilt():
+                        return False
+                    recovery_attempts += 1
+                    retry_after_recovery = True
+                    break
+                if goal_handle.get_comm_state() == actionlib.CommState.DONE:
+                    state = goal_handle.get_goal_status()
+                    if state == GoalStatus.SUCCEEDED:
+                        self.safe_stop_robot()
+                        return True
+                    rospy.logerr(
+                        'navigation failed with move_base state %s: %s',
+                        state,
+                        goal_handle.get_goal_status_text(),
+                    )
+                    self.safe_stop_robot()
+                    return False
+                time.sleep(0.1)
+            if retry_after_recovery:
+                rospy.logwarn(
+                    'Resending navigation goal after reverse escape '
+                    '(attempt %d/%d)',
+                    recovery_attempts,
+                    self.tilt_recovery_max_attempts,
                 )
-                self.safe_stop_robot()
-                return False
-            time.sleep(0.1)
-        goal_handle.cancel()
+                continue
+            goal_handle.cancel()
+            break
         self.safe_stop_robot()
         rospy.logerr(
             'navigation stopped when the current task deadline expired after %.1f seconds',
@@ -1498,14 +1778,136 @@ class VoiceControlNavNode(MissionLifecycle):
             time.sleep(0.2)
         return None
 
+    def _set_controlled_ramp_motion(self, enabled):
+        with self._tilt_lock:
+            self._controlled_ramp_motion = bool(enabled)
+            self._tilt_violation_count = 0
+            if enabled:
+                self._tilt_fault = False
+        if enabled:
+            self._tilt_recovery_requested.clear()
+
+    def _tilt_snapshot(self):
+        with self._tilt_lock:
+            return (
+                self.imu_received,
+                self.current_roll_degrees,
+                self.current_pitch_degrees,
+                self.current_tilt_degrees,
+                self._tilt_fault,
+            )
+
+    def _opposite_tilt_escape_twist(self):
+        speed = max(0.05, self.tilt_recovery_speed)
+        with self._command_lock:
+            command_age = time.monotonic() - self._last_motion_command_time
+            linear_x = self._last_motion_linear_x
+            linear_y = self._last_motion_linear_y
+
+        magnitude = math.hypot(linear_x, linear_y)
+        if command_age <= self.tilt_command_max_age and magnitude >= 0.01:
+            escape_x = -linear_x / magnitude * speed
+            escape_y = -linear_y / magnitude * speed
+            source = 'opposite of the latest chassis command'
+        else:
+            yaw = (
+                quaternion_yaw_radians(self.current_pose.orientation)
+                if self.current_pose_received
+                else 0.0
+            )
+            # Negative map Y is the verified flat-side escape corridor beside the ramp.
+            escape_x = -math.sin(yaw) * speed
+            escape_y = -math.cos(yaw) * speed
+            source = 'negative-map-Y fallback'
+
+        twist = Twist()
+        twist.linear.x = escape_x
+        twist.linear.y = escape_y
+        return twist, source
+
+    def _recover_from_unexpected_tilt(self):
+        timeout = self._bounded_timeout(self.tilt_recovery_timeout)
+        if timeout <= 0.0 or self.stop_requested or rospy.is_shutdown():
+            return False
+        with self._tilt_lock:
+            if self._tilt_recovery_active:
+                return False
+            self._tilt_recovery_active = True
+            self._tilt_violation_count = 0
+            self._tilt_fault = False
+        self._tilt_recovery_requested.clear()
+        try:
+            self.move_base_client.cancel_all_goals()
+        except Exception:
+            pass
+
+        twist, source = self._opposite_tilt_escape_twist()
+        rospy.logwarn(
+            'Tilt recovery moving away at x=%.3f y=%.3f using %s; mission remains active',
+            twist.linear.x,
+            twist.linear.y,
+            source,
+        )
+        deadline = time.monotonic() + timeout
+        minimum_end = time.monotonic() + min(
+            timeout, max(0.0, self.tilt_recovery_min_duration)
+        )
+        level_samples = 0
+        try:
+            while not rospy.is_shutdown() and not self.stop_requested:
+                imu_received, roll, pitch, tilt, _tilt_fault = self._tilt_snapshot()
+                if self.enable_tilt_guard and not imu_received:
+                    rospy.logerr('tilt recovery lost IMU data')
+                    break
+                if (
+                    time.monotonic() >= minimum_end
+                    and tilt <= self.tilt_recovery_level_degrees
+                ):
+                    level_samples += 1
+                    if level_samples >= self.tilt_recovery_level_samples:
+                        rospy.loginfo(
+                            'Tilt recovery cleared the ramp edge: '
+                            'roll_delta=%.2f pitch_delta=%.2f tilt=%.2f; '
+                            'retrying navigation',
+                            roll,
+                            pitch,
+                            tilt,
+                        )
+                        with self._tilt_lock:
+                            self._tilt_fault = False
+                        return True
+                else:
+                    level_samples = 0
+                if time.monotonic() >= deadline:
+                    break
+                self.mecanum_pub.publish(twist)
+                time.sleep(0.05)
+            with self._tilt_lock:
+                self._tilt_fault = True
+            rospy.logerr(
+                'tilt recovery could not return the chassis to level within %.1f seconds',
+                timeout,
+            )
+            return False
+        finally:
+            self.safe_stop_robot()
+            self._tilt_recovery_requested.clear()
+            with self._tilt_lock:
+                self._tilt_recovery_active = False
+                self._tilt_violation_count = 0
+
     def reverse_up_ramp_with_laser(self, distance, speed, timeout):
         if not self.current_pose_received:
             rospy.logerr('cannot confirm ramp return without odometry')
             return False
         try:
-            self.move_base_client.cancel_goal()
+            self.move_base_client.cancel_all_goals()
         except Exception:
             pass
+        imu_received, _roll, _pitch, _tilt, tilt_fault = self._tilt_snapshot()
+        if self.enable_tilt_guard and (not imu_received or tilt_fault):
+            rospy.logerr('cannot start controlled ramp return without a healthy IMU')
+            return False
         start_x = self.current_pose.position.x
         start_y = self.current_pose.position.y
         timeout = self._bounded_timeout(timeout)
@@ -1514,8 +1916,12 @@ class VoiceControlNavNode(MissionLifecycle):
             return False
         end_time = time.monotonic() + timeout
         traveled = 0.0
+        self._set_controlled_ramp_motion(True)
         try:
             while not rospy.is_shutdown() and not self.stop_requested:
+                if self._tilt_recovery_requested.is_set():
+                    self._recover_from_unexpected_tilt()
+                    return False
                 dx = self.current_pose.position.x - start_x
                 dy = self.current_pose.position.y - start_y
                 traveled = math.sqrt(dx * dx + dy * dy)
@@ -1535,6 +1941,7 @@ class VoiceControlNavNode(MissionLifecycle):
             return False
         finally:
             self.safe_stop_robot()
+            self._set_controlled_ramp_motion(False)
 
     def moon_result_callback(self, msg):
         try:
@@ -1928,9 +2335,36 @@ class VoiceControlNavNode(MissionLifecycle):
             self._yolo_unloaded_for_mission = True
             return True
 
+    def _navigate_ramp_clearance(self, pose, label):
+        if not self.enable_ramp_clearance_waypoints:
+            return True
+        rospy.loginfo(
+            'Ramp-clearance route %s via x=%.2f y=%.2f yaw=%.1f',
+            label,
+            pose['x'],
+            pose['y'],
+            pose['yaw'],
+        )
+        return self.navigate_and_wait(pose['x'], pose['y'], pose['yaw'])
+
     def control(self, x, y, yaw, set_status):
         if self.stop_requested or rospy.is_shutdown():
             return False
+        if set_status == 'detect':
+            if not self._navigate_ramp_clearance(
+                self.departure_ramp_clearance_pose, 'after initial turn'
+            ):
+                return False
+        elif set_status == 'place':
+            if not self._navigate_ramp_clearance(
+                self.place_ramp_clearance_pose, 'before placement'
+            ):
+                return False
+        elif set_status == 'pick2':
+            if not self._navigate_ramp_clearance(
+                self.pick_ramp_clearance_pose, 'leaving placement for second pickup'
+            ):
+                return False
         if set_status != 'pick2':
             if not self.navigate_and_wait(x, y, yaw):
                 return False
@@ -2200,9 +2634,13 @@ class VoiceControlNavNode(MissionLifecycle):
         if not self._restart_yolo():
             return False
         self.play('1')
-        if not self._drive_for(linear_x=0.3, duration=3.0):
-            return False
-        return self._drive_for(angular_z=-0.5, duration=3.0)
+        self._set_controlled_ramp_motion(True)
+        try:
+            if not self._drive_for(linear_x=0.3, duration=3.0):
+                return False
+            return self._drive_for(angular_z=-0.5, duration=3.0)
+        finally:
+            self._set_controlled_ramp_motion(False)
 
     def run_mission_once(self):
         try:
