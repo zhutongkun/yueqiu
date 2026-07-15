@@ -12,6 +12,13 @@ warn() {
     printf '[stop-moon] WARNING: %s\n' "$*" >&2
 }
 
+source_setup() {
+    set +u
+    # shellcheck disable=SC1090
+    source "$1"
+    set -u
+}
+
 find_ros_setup() {
     if [ -n "${MOON_ROS_SETUP:-}" ]; then
         [ -r "$MOON_ROS_SETUP" ] || return 1
@@ -56,12 +63,10 @@ call_stop_service() {
 
 ROS_SETUP="$(find_ros_setup 2>/dev/null || true)"
 if [ -n "$ROS_SETUP" ]; then
-    # shellcheck disable=SC1090
-    source "$ROS_SETUP"
+    source_setup "$ROS_SETUP"
 fi
 if [ -r "$WORKSPACE/devel/setup.bash" ]; then
-    # shellcheck disable=SC1090
-    source "$WORKSPACE/devel/setup.bash"
+    source_setup "$WORKSPACE/devel/setup.bash"
 fi
 
 if ! command -v rosservice >/dev/null 2>&1 || ! command -v rostopic >/dev/null 2>&1; then

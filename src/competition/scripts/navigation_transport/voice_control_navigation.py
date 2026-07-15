@@ -154,15 +154,6 @@ class VoiceControlNavNode(MissionLifecycle):
         self.service_discovery_timeout = float(
             self._mission_param('service_discovery_timeout', 2.0)
         )
-        self.navigation_timeout = float(
-            self._mission_param('navigation_timeout', 35.0)
-        )
-        self.pick_navigation_timeout = float(
-            self._mission_param('pick_navigation_timeout', 20.0)
-        )
-        self.return_navigation_timeout = float(
-            self._mission_param('return_navigation_timeout', 40.0)
-        )
         self.move_base_server_timeout = float(
             self._mission_param('move_base_server_timeout', 10.0)
         )
@@ -360,7 +351,7 @@ class VoiceControlNavNode(MissionLifecycle):
         self.move_base_action_name = rospy.get_param(
             '~move_base_action', '/move_base'
         )
-        self.move_base_client = actionlib.SimpleActionClient(
+        self.move_base_client = actionlib.ActionClient(
             self.move_base_action_name, MoveBaseAction
         )
 
@@ -1345,10 +1336,12 @@ class VoiceControlNavNode(MissionLifecycle):
         if self.stop_requested or rospy.is_shutdown():
             self.safe_stop_robot()
             return False
-        requested_timeout = float(timeout or self.navigation_timeout)
+        # Navigation has no independent path timeout. The current task-stage
+        # deadline and the global mission budget remain the hard safety bounds.
+        requested_timeout = float('inf') if timeout is None else float(timeout)
         timeout = self._bounded_timeout(requested_timeout)
         if timeout <= 0.0:
-            rospy.logerr('navigation skipped because its deadline expired')
+            rospy.logerr('navigation skipped because the task deadline expired')
             self.safe_stop_robot()
             return False
         navigation_deadline = time.monotonic() + timeout
@@ -1365,26 +1358,31 @@ class VoiceControlNavNode(MissionLifecycle):
             rospy.logerr('move_base action server is unavailable')
             return False
         goal = self.make_move_base_goal(x, y, yaw_degrees)
-        self.move_base_client.send_goal(goal)
+        goal_handle = self.move_base_client.send_goal(goal)
         while not rospy.is_shutdown() and time.monotonic() < navigation_deadline:
             if self.stop_requested:
-                self.move_base_client.cancel_goal()
+                goal_handle.cancel()
                 self.safe_stop_robot()
                 return False
-            wait_slice = min(0.2, max(0.0, navigation_deadline - time.monotonic()))
-            if wait_slice <= 0.0:
-                break
-            if self.move_base_client.wait_for_result(rospy.Duration(wait_slice)):
-                state = self.move_base_client.get_state()
+            if goal_handle.get_comm_state() == actionlib.CommState.DONE:
+                state = goal_handle.get_goal_status()
                 if state == GoalStatus.SUCCEEDED:
                     self.safe_stop_robot()
                     return True
-                rospy.logerr('navigation failed with move_base state %s', state)
+                rospy.logerr(
+                    'navigation failed with move_base state %s: %s',
+                    state,
+                    goal_handle.get_goal_status_text(),
+                )
                 self.safe_stop_robot()
                 return False
-        self.move_base_client.cancel_goal()
+            time.sleep(0.1)
+        goal_handle.cancel()
         self.safe_stop_robot()
-        rospy.logerr('navigation timed out after %.1f seconds', timeout)
+        rospy.logerr(
+            'navigation stopped when the current task deadline expired after %.1f seconds',
+            timeout,
+        )
         return False
 
     def wait_nav_status(self, timeout=30.0, deadline=None):
@@ -1939,7 +1937,7 @@ class VoiceControlNavNode(MissionLifecycle):
 
         if set_status == 'pick1':
             if not self.navigate_and_wait(
-                1.30, -3.12, 0.0, timeout=self.pick_navigation_timeout
+                1.30, -3.12, 0.0
             ):
                 return False
             pick_deadline = self._make_local_deadline(
@@ -2082,7 +2080,6 @@ class VoiceControlNavNode(MissionLifecycle):
                 self.ramp_approach_pose['x'],
                 self.ramp_approach_pose['y'],
                 self.ramp_approach_pose['yaw'],
-                timeout=min(self.navigation_timeout, 30.0),
             ):
                 return False
             if self.use_ramp_alignment_service and not self.run_ramp_alignment():
@@ -2125,7 +2122,6 @@ class VoiceControlNavNode(MissionLifecycle):
             self.base_pose['x'],
             self.base_pose['y'],
             self.base_pose['yaw'],
-            timeout=self.return_navigation_timeout,
         ):
             return False
         if not self.safe_arm_pose(wait_seconds=1.0):

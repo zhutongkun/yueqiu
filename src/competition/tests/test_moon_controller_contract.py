@@ -282,13 +282,29 @@ class ControllerContractTests(unittest.TestCase):
         self.assertLess(up, wait)
         self.assertLess(wait, stop)
 
-    def test_base_return_uses_move_base_action_wait(self):
+    def test_navigation_tracks_each_move_base_goal_handle(self):
         method_source = ast.get_source_segment(
             self.source, self.methods['navigate_and_wait']
         )
-        self.assertIn('send_goal', method_source)
-        self.assertIn('wait_for_result', method_source)
+        self.assertIn('actionlib.ActionClient(', self.source)
+        self.assertNotIn('actionlib.SimpleActionClient(', self.source)
+        self.assertIn('goal_handle = self.move_base_client.send_goal', method_source)
+        self.assertIn('goal_handle.get_comm_state()', method_source)
+        self.assertIn('actionlib.CommState.DONE', method_source)
+        self.assertIn('goal_handle.get_goal_status()', method_source)
+        self.assertIn('goal_handle.cancel()', method_source)
         self.assertIn('GoalStatus.SUCCEEDED', method_source)
+
+    def test_navigation_has_no_independent_path_timeout(self):
+        method_source = ast.get_source_segment(
+            self.source, self.methods['navigate_and_wait']
+        )
+        self.assertIn("float('inf') if timeout is None", method_source)
+        self.assertIn('self._bounded_timeout(', method_source)
+        self.assertIn('current task deadline expired', method_source)
+        self.assertNotIn('self.navigation_timeout', self.source)
+        self.assertNotIn('self.pick_navigation_timeout', self.source)
+        self.assertNotIn('self.return_navigation_timeout', self.source)
 
     def test_announcement_order_is_fixed(self):
         method_source = ast.get_source_segment(

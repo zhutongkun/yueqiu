@@ -10,6 +10,13 @@ log() {
     printf '[run-moon] %s\n' "$*"
 }
 
+source_setup() {
+    set +u
+    # shellcheck disable=SC1090
+    source "$1"
+    set -u
+}
+
 warn() {
     printf '[run-moon] WARNING: %s\n' "$*" >&2
 }
@@ -70,13 +77,17 @@ cleanup() {
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "$PYTHON_BIN is not installed"
 "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)' ||
     die "Moon YOLOv5 requires Python >= 3.8; found $("$PYTHON_BIN" --version 2>&1)"
+[ -r "$WORKSPACE/.typerc" ] || die "Missing $WORKSPACE/.typerc robot hardware configuration"
+source_setup "$WORKSPACE/.typerc"
+for required_name in \
+    ROBOT_HOST ROBOT_MASTER MACHINE_TYPE LIDAR_TYPE DEPTH_CAMERA_TYPE ASR_LANGUAGE; do
+    [ -n "${!required_name:-}" ] || die "$required_name is unset after sourcing $WORKSPACE/.typerc"
+done
 ROS_SETUP="$(find_ros_setup)" || die "No ROS1 installation found under /opt/ros"
-# shellcheck disable=SC1090
-source "$ROS_SETUP"
+source_setup "$ROS_SETUP"
 [ "${ROS_VERSION:-}" = "1" ] || die "ROS1 is required"
 [ -r "$WORKSPACE/devel/setup.bash" ] || die "Missing $WORKSPACE/devel/setup.bash; run setup_moon_runtime.sh first"
-# shellcheck disable=SC1090
-source "$WORKSPACE/devel/setup.bash"
+source_setup "$WORKSPACE/devel/setup.bash"
 command -v roslaunch >/dev/null 2>&1 || die "roslaunch is not available"
 rospack find competition >/dev/null 2>&1 || die "competition package is not visible in the sourced workspace"
 

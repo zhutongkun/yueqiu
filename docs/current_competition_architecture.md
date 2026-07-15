@@ -28,7 +28,7 @@ flowchart TD
     L --> RAMP["ramp.py / ramp services"]
     L --> MAIN["voice_control_navigation.py"]
     L --> RVIZ["rviz_navigation.launch"]
-    MAIN -->|"/move_base_simple/goal"| MB
+    MAIN -->|"/move_base action / per-goal handle"| MB
     MB -->|"/move_base/result"| MAIN
     MAIN -->|"/controller/cmd_vel"| ROBOT
     MAIN --> ALIGN
@@ -46,8 +46,8 @@ flowchart TD
 | 功能 | 源码静态确认的接口 | 说明 |
 | --- | --- | --- |
 | 语音结果 | `/asr_node/voice_words`，`std_msgs/String` | `voice_control_navigation.py` 订阅；离线语音链路由 `awake_node.py`、`asr_node.py` 和 `voice_control` 组成 |
-| 导航目标 | `/move_base_simple/goal`，`geometry_msgs/PoseStamped` | 主程序发布 |
-| 导航结果 | `/move_base/result`，`move_base_msgs/MoveBaseActionResult` | 状态 3 被基线程序视为成功，状态大于 3 视为失败 |
+| 导航目标 | `/move_base`，`move_base_msgs/MoveBaseAction` | 正式比赛使用低层 `ActionClient` 返回的独立 goal handle；`/move_base_simple/goal` 只保留兼容调试入口 |
+| 导航结果 | goal handle 终态及 `/move_base/result` | 正式等待只接受当前句柄的 `SUCCEEDED`，避免连续目标切换时 `SimpleActionClient` 跟踪竞态 |
 | 底盘速度 | `/controller/cmd_vel`，`geometry_msgs/Twist` | 主程序、对齐节点和坡面节点均可能发布；`move_base` 也重映射到该话题 |
 | 里程计/雷达 | `/odom`、`/scan` | 主程序用于航向、距离和返坡激光纠偏 |
 | 机械臂 | `/servo_controllers/port_id_1/multi_id_pos_dur` | 总线舵机动作；夹取还调用运动学服务 |
@@ -55,7 +55,7 @@ flowchart TD
 | 形状夹取 | `/shape_recognition/start`、`pick`、`stop`/`close` | `shape_recognition_down.py` 使用 Gemini RGB、深度和相机内参 |
 | 坡面 | `/ramp/up`、`down`、`start`、`stop` | `ramp.py` 使用 `/gemini_camera/depth/image_raw`，状态参数为 `/ramp/status` |
 | 原矿石卡片 YOLO | `/yolov5/start`、`stop`、`calibration`，结果参数 `/yolov5/shape` | Astra RGB；三类 `cube/box/cylinder`；现有 TensorRT engine 不能当作月球十分类模型 |
-| 月球卡片检测 | `/moon_detector/reset`、`start`、`stop`；`/moon_detector/result`、`finished`、`status` | 本分支实现；每次识别由独立 `session_id` 隔离 |
+| 月球卡片检测 | `/moon_detector/reset`、`preload`、`start`、`stop`、`unload`；`/moon_detector/result`、`finished`、`status` | 本分支实现；每次识别由独立 `session_id` 隔离 |
 
 相机的源码默认值不是单一相机：原三分类 YOLO 和本分支月球检测默认读取 `/astra_camera/rgb/image_raw`；平台对齐、形状夹取和坡面处理读取 Gemini 的 RGB/深度话题。实际设备上的相机型号、命名空间和发布频率必须上车用 `rostopic list/info/hz` 确认。
 
@@ -126,7 +126,7 @@ flowchart TD
 
 七个主体阶段上限合计为 `20 + 50 + 85 + 45 + 85 + 45 + 60 = 390` 秒。每一阶段仍使用同一个绝对主体截止，前一阶段节省的时间可供后续阶段使用，但任何后续阶段都不能把绝对截止向后延长。
 
-内部截止包括：服务发现 2 秒；普通导航 35 秒、夹取点导航 20 秒、返航导航 40 秒、`move_base` 服务端等待 10 秒；Moon 会话 25 秒（启动 12 秒、检测 12 秒、卸载 5 秒）；形状夹取整段 25 秒（启动 3 秒、预热 0.5 秒、`pick` 服务 4 秒、状态等待 18 秒、停止 1 秒）；平台状态 15 秒、放置服务 8 秒；原 YOLO 检测/启动/卸载 8/12/5 秒；坡面穿越 15 秒、可选坡面对齐 20 秒；每段音频 4 秒。迟到的异步服务响应若可能重新启动执行器，控制器会尝试调用对应 `stop` 服务中和它，防止已经超时的夹取或放置在后续阶段突然继续动作。
+路径导航没有独立倒计时，只使用所属任务阶段和全局比赛预算的剩余时间；`move_base` 服务端发现仍限制为 10 秒。其他内部截止包括：服务发现 2 秒；Moon 会话 25 秒（启动 12 秒、检测 12 秒、卸载 5 秒）；形状夹取整段 25 秒（启动 3 秒、预热 0.5 秒、`pick` 服务 4 秒、状态等待 18 秒、停止 1 秒）；平台状态 15 秒、放置服务 8 秒；原 YOLO 检测/启动/卸载 8/12/5 秒；坡面穿越 15 秒、可选坡面对齐 20 秒；每段音频 4 秒。迟到的异步服务响应若可能重新启动执行器，控制器会尝试调用对应 `stop` 服务中和它，防止已经超时的夹取或放置在后续阶段突然继续动作。
 
 450 秒是比赛动作截止，不是强行杀死进程的时刻。统一安全清理仍允许短暂调用视觉、对齐和坡面节点的 `stop/unload`，这些调用分别有 1–5 秒截止，避免为了守时而跳过停车和资源释放。450 到 480 秒的 30 秒系统余量专用于这类清理、ROS 调度和设备抖动，不得重新分配给主体任务；目标 Jetson 必须实测从启动请求接受到最终零速度/清理完成的墙钟时间。
 

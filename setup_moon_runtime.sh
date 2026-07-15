@@ -12,6 +12,13 @@ log() {
     printf '[setup-moon] %s\n' "$*"
 }
 
+source_setup() {
+    set +u
+    # shellcheck disable=SC1090
+    source "$1"
+    set -u
+}
+
 warn() {
     printf '[setup-moon] WARNING: %s\n' "$*" >&2
 }
@@ -143,8 +150,7 @@ log "Model SHA256 verified: $ACTUAL_MODEL_SHA256"
 stat "$MODEL_PATH"
 
 ROS_SETUP="$(find_ros_setup)" || die "No ROS1 setup.bash found under /opt/ros"
-# shellcheck disable=SC1090
-source "$ROS_SETUP"
+source_setup "$ROS_SETUP"
 [ "${ROS_VERSION:-}" = "1" ] || die "ROS_VERSION must be 1, found '${ROS_VERSION:-unset}'"
 [ -n "${ROS_DISTRO:-}" ] || die "ROS_DISTRO is unset after sourcing $ROS_SETUP"
 BUILD_TOOL="$(select_build_tool)"
@@ -292,8 +298,7 @@ else
 fi
 
 [ -r "$WORKSPACE/devel/setup.bash" ] || die "$BUILD_TOOL completed without devel/setup.bash"
-# shellcheck disable=SC1090
-source "$WORKSPACE/devel/setup.bash"
+source_setup "$WORKSPACE/devel/setup.bash"
 rospack find competition >/dev/null
 "$PYTHON_BIN" - <<'PY'
 import message_filters

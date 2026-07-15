@@ -101,6 +101,13 @@ class LaunchAndConfigContractTests(unittest.TestCase):
             30.0,
         )
 
+    def test_navigation_uses_task_deadlines_not_path_timeouts(self):
+        mission_config = source(MISSION_CONFIG)
+        self.assertNotIn('navigation_timeout:', mission_config)
+        self.assertNotIn('pick_navigation_timeout:', mission_config)
+        self.assertNotIn('return_navigation_timeout:', mission_config)
+        self.assertIn('move_base_server_timeout:', mission_config)
+
     def test_stage_caps_fit_exactly_inside_the_body_budget(self):
         mission_timeout = numeric_config_value(
             MISSION_CONFIG, 'mission_timeout_seconds'
@@ -216,6 +223,19 @@ class DeploymentScriptContractTests(unittest.TestCase):
         self.assertIn('AUTOINSTALL = False', general_text)
         self.assertIn('install=False', general_text)
 
+    def test_run_script_loads_robot_hardware_environment(self):
+        run_text = source(RUN_SCRIPT)
+        self.assertIn('source_setup "$WORKSPACE/.typerc"', run_text)
+        for name in (
+            'ROBOT_HOST',
+            'ROBOT_MASTER',
+            'MACHINE_TYPE',
+            'LIDAR_TYPE',
+            'DEPTH_CAMERA_TYPE',
+            'ASR_LANGUAGE',
+        ):
+            self.assertIn(name, run_text)
+
     def test_stop_script_releases_both_visual_models(self):
         text = source(STOP_SCRIPT)
         self.assertIn('call_stop_service /moon_detector/unload', text)
@@ -226,6 +246,14 @@ class DeploymentScriptContractTests(unittest.TestCase):
             text = source(path)
             self.assertIn('MOON_ROS_SETUP', text)
             self.assertIn('/opt/ros_ws/melodic/setup.bash', text)
+
+    def test_ros_setup_is_sourced_with_nounset_temporarily_disabled(self):
+        for path in (SETUP_SCRIPT, RUN_SCRIPT, STOP_SCRIPT):
+            text = source(path)
+            self.assertIn('source_setup()', text)
+            self.assertIn('set +u', text)
+            self.assertIn('source "$1"', text)
+            self.assertIn('set -u', text)
 
 
 if __name__ == '__main__':

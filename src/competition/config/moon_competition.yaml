@@ -12,9 +12,6 @@ announcement_reserve_seconds: 20.0
 deadline_warning_seconds: 90.0
 
 service_discovery_timeout: 2.0
-navigation_timeout: 35.0
-pick_navigation_timeout: 20.0
-return_navigation_timeout: 40.0
 move_base_server_timeout: 10.0
 moon_session_timeout: 25.0
 moon_rotation_degrees: 90.0

@@ -4,7 +4,7 @@
 
 本指南用于把当前 ROS1/catkin 分支部署到实际 Jetson 小车。部署脚本不改变 JetPack、CUDA、TensorRT、系统 ROS、PyTorch、torchvision 或 OpenCV；如果这些组件缺失或 ABI 不兼容，脚本会停止并要求按小车现有镜像安装匹配版本。
 
-当前目标 Orin Nano 的 `/home/ubuntu/ros_ws` 已完成 Moon CPU 原生加载、预加载服务、无运动完整 launch、136 项自动测试和 `catkin build competition -j4 -l4`。以下安全检查仍应在每次换车、换卡、换地图或更新依赖后重新执行；真实驾驶、机械臂、坡面、返航和声卡全流程仍需现场验收。
+当前目标 Orin Nano 的 `/home/ubuntu/ros_ws` 已完成 Moon CPU 原生加载、预加载服务、无运动完整 launch、140 项自动测试和 `catkin build competition -j4 -l4`。以下安全检查仍应在每次换车、换卡、换地图或更新依赖后重新执行；真实驾驶、机械臂、坡面、返航和声卡全流程仍需现场验收。
 
 ## 2. 部署前安全准备
 
@@ -159,6 +159,8 @@ cd "$MOON_WORKSPACE"
 ./run_moon_competition.sh
 ```
 
+脚本会主动加载工作空间根目录的 `.typerc`，并检查 `ROBOT_HOST`、`ROBOT_MASTER`、`MACHINE_TYPE`、`LIDAR_TYPE`、`DEPTH_CAMERA_TYPE` 和 `ASR_LANGUAGE`。因此从干净 SSH shell 或新终端启动时不再依赖 `.zshrc` 已经提前设置这些变量。
+
 额外的 roslaunch 参数可原样传入，例如：
 
 ```bash
@@ -213,6 +215,8 @@ rostopic echo /move_base/result
 ```
 
 每个任务点应创建新 `session_id`，三个槽位独立保存。任务点 1、2、3 都不得现场播放识别结果。第三点完成后应继续第二次放置、功能节点关闭、机械臂安全复位和一次基线激光纠偏坡面穿越；这些全部成功后才允许设置整体任务完成并发送最终基地目标。
+
+路径导航没有单独的秒数超时：只要当前夹取、放置、识别或返航阶段仍有时间，`move_base` 就继续执行。阶段上限和 450 秒全局硬截止仍会取消导航并停车，因此不要把这项行为理解为无期限运行。
 
 默认 `use_ramp_alignment_service=false`。只有在目标小车上单独验证 `/ramp/start -> /ramp/up -> stop` 的车身朝向与激光倒车方案兼容后才能启用；启用时它只是坡前对齐，实际坡面穿越仍只能执行一次。
 
