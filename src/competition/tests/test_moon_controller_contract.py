@@ -79,6 +79,19 @@ class ControllerContractTests(unittest.TestCase):
         self.assertGreaterEqual(method_source.count('enforce_mission_budget=False'), 2)
         self.assertIn('self._yolo_preloaded = True', method_source)
 
+    def test_chinese_ready_banner_is_printed_after_start_timer_is_scheduled(self):
+        init_source = ast.get_source_segment(self.source, self.methods['__init__'])
+        timer = init_source.index('self.schedule_start_timeout()')
+        banner = init_source.index('self._log_startup_ready_banner()', timer)
+        self.assertLess(timer, banner)
+        banner_source = ast.get_source_segment(
+            self.source, self.methods['_log_startup_ready_banner']
+        )
+        self.assertIn('系统启动完成', banner_source)
+        self.assertIn('小麦小麦', banner_source)
+        self.assertIn('开始执行任务', banner_source)
+        self.assertIn('自动启动倒计时已开始', banner_source)
+
     def test_voice_enable_parameter_gates_input_and_playback(self):
         self.assertIn("self.enable_voice = bool(self._mission_param('enable_voice', True))", self.source)
         init_source = ast.get_source_segment(

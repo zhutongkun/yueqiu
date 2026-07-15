@@ -406,6 +406,7 @@ class VoiceControlNavNode(MissionLifecycle):
         self.play('running')
         self.schedule_start_timeout()
         self.save_mission_results()
+        self._log_startup_ready_banner()
         rospy.loginfo('Competition controller is waiting for its one start trigger')
         rospy.spin()
 
@@ -690,6 +691,23 @@ class VoiceControlNavNode(MissionLifecycle):
             self.start_timeout_callback,
             oneshot=True,
         )
+
+    def _log_startup_ready_banner(self):
+        separator = '=' * 72
+        rospy.loginfo(separator)
+        rospy.loginfo('系统启动完成：导航、机械臂和视觉模块已就绪，小车当前保持停车')
+        if self.enable_voice:
+            rospy.loginfo('请现在说“小麦小麦”唤醒，然后说“开始执行任务”')
+        else:
+            rospy.loginfo('语音输入已关闭，请使用启动服务或人工调试方式启动')
+        if self.enable_timeout_auto_start and self.start_timeout_seconds > 0:
+            rospy.loginfo(
+                '%.0f 秒自动启动倒计时已开始；未收到开始指令时只启动一次',
+                self.start_timeout_seconds,
+            )
+        else:
+            rospy.loginfo('自动启动已关闭，小车将继续保持停车并等待人工启动')
+        rospy.loginfo(separator)
 
     def cancel_start_timeout(self):
         timer = self._start_timeout_timer
