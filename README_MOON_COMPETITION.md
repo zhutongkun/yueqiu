@@ -10,7 +10,7 @@ roslaunch competition position_correction_pick.launch
 
 三个识别点不是完整比赛，也不是返航条件。第三个识别结束后，程序继续执行原有后退、第二次放置、功能节点收尾和机械臂安全复位；只有所有主体任务完成后才返航。确认到达基地并发布零速度后，才按任务点 1、2、3 的固定顺序集中播放离线语音。
 
-当前开发电脑是 Windows 且没有 ROS1/catkin，目标 Jetson 也无法从本机连通。因此源码静态检查、ROS 无关单元测试和模型离线验证可以在开发机执行；catkin 编译、ROS 图、相机、导航、机械臂、声卡及 systemd 服务仍必须在小车实机确认。详见 `docs/moon_competition_test_report.md`。
+当前分支已在目标 Jetson Orin Nano 的 `/home/ubuntu/ros_ws` 完成 Moon CPU 模型原生加载、ROS 预加载服务、无运动完整 launch、136 项自动测试和 `catkin build competition -j4 -l4`。真实比赛卡片、完整导航、机械臂、坡面、返航和离线播报仍必须在比赛场地实机确认。详见 `docs/moon_competition_test_report.md`。
 
 ## 真实比赛顺序
 
@@ -97,8 +97,10 @@ mission_execution_count = 1
 服务：
 
 - `/moon_detector/reset`
+- `/moon_detector/preload`
 - `/moon_detector/start`
 - `/moon_detector/stop`
+- `/moon_detector/unload`
 
 话题：
 
@@ -128,6 +130,10 @@ size:   14438056 bytes
 SHA256: ab953a754cc6ea68742d49ccf26d8b122bb771fe65aa6bd582761bdeaaa7da34
 input:  640
 ```
+
+目标 Orin 默认使用 `device: cpu`，并在语音/15 秒一次性启动窗口打开前调用 `/moon_detector/preload`。实测 CPU 模型加载约 6.4-9.5 秒，640x640 推理平均约 0.84 秒/帧，四票确认估算约 3.24 秒；预加载后的 `/moon_detector/start` 约 1.52 秒。GPU 冷加载约 89.5 秒，且与原三分类 TensorRT 同时驻留时只剩约 940 MiB 可用内存并开始使用 swap，因此不作为当前默认方案。
+
+该 checkpoint 由较新的 Windows Python 保存，序列化数据引用了 `pathlib._local.WindowsPath`。目标 Python 3.8 没有该模块，且 Linux 不能直接实例化 `WindowsPath`。检测节点在加载前把 checkpoint 中的 Windows/Posix 具体路径类映射到当前主机原生路径类，不修改模型文件，模型 SHA256 保持不变。
 
 类别顺序不可修改：
 
@@ -195,6 +201,6 @@ bash ./setup_moon_runtime.sh
 - 基地坐标、坡道距离、地图导航点、机械臂安全姿态和声卡设备必须现场标定。
 - 默认只执行基线的激光纠偏坡面方案；深度 `/ramp/up` 对齐默认关闭，只有在目标小车验证车身朝向后才能启用，且不会叠加第二次坡面穿越。
 - Moon 运行时禁止自动 `pip install`；缺失依赖必须在比赛前通过部署检查解决。
-- 原三分类形状识别完成后卸载其 TensorRT/PyCUDA 资源，本轮不再重载；Moon 首次识别时懒加载，并在完成、停止、错误或 reset 时卸载。实际显存余量仍须在目标 Jetson 用 `tegrastats` 验证。
+- 原三分类形状识别完成后卸载其 TensorRT/PyCUDA 资源，本轮不再重载；Moon CPU 模型在启动窗口打开前预加载，三个会话复用同一模型，并在完成、停止、错误或 reset 时卸载。只有中文“系统启动完成”横幅出现后才允许语音唤醒或等待 15 秒自动启动。
 - 不复制其他 Jetson 或桌面 GPU 生成的 TensorRT engine；只能在目标 Jetson 上构建并回归十类结果。
 - 未完成实机检查前，不得把本分支标记为比赛验收通过。

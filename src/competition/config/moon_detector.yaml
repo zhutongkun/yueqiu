@@ -11,7 +11,9 @@ minimum_votes: 4
 minimum_consecutive_frames: 2
 timeout_seconds: 15.0
 maximum_result_age: 2.0
-device: "auto"
+# Orin CPU inference averages about 0.84s per 640x640 frame. Keeping this model
+# on CPU avoids a roughly 90s PyTorch CUDA cold start and dual-GPU-model pressure.
+device: "cpu"
 half: false
 
 enable_roi: false

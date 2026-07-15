@@ -60,11 +60,15 @@ class ControllerContractTests(unittest.TestCase):
     def test_yolo_is_prewarmed_before_start_inputs_are_enabled(self):
         init_source = ast.get_source_segment(self.source, self.methods['__init__'])
         prewarm = init_source.index('self._prewarm_yolo_for_mission()')
-        voice_subscriber = init_source.index("'/asr_node/voice_words'", prewarm)
+        moon_prewarm = init_source.index(
+            'self._prewarm_moon_detector_for_mission()', prewarm
+        )
+        voice_subscriber = init_source.index("'/asr_node/voice_words'", moon_prewarm)
         initialization_complete = init_source.index(
             'self.initialization_complete = True', voice_subscriber
         )
         start_timer = init_source.index('self.schedule_start_timeout()', prewarm)
+        self.assertLess(prewarm, moon_prewarm)
         self.assertLess(prewarm, voice_subscriber)
         self.assertLess(voice_subscriber, initialization_complete)
         self.assertLess(initialization_complete, start_timer)
@@ -78,6 +82,14 @@ class ControllerContractTests(unittest.TestCase):
         self.assertLess(start, stop)
         self.assertGreaterEqual(method_source.count('enforce_mission_budget=False'), 2)
         self.assertIn('self._yolo_preloaded = True', method_source)
+
+    def test_moon_model_is_prewarmed_without_starting_a_detection_session(self):
+        method_source = ast.get_source_segment(
+            self.source, self.methods['_prewarm_moon_detector_for_mission']
+        )
+        self.assertIn("'/moon_detector/preload'", method_source)
+        self.assertNotIn("'/moon_detector/start'", method_source)
+        self.assertIn('enforce_mission_budget=False', method_source)
 
     def test_chinese_ready_banner_is_printed_after_start_timer_is_scheduled(self):
         init_source = ast.get_source_segment(self.source, self.methods['__init__'])
@@ -150,6 +162,13 @@ class ControllerContractTests(unittest.TestCase):
         self.assertNotIn('play_moon_asset', calls)
         self.assertNotIn('begin_return_to_base', calls)
         self.assertNotIn('mark_all_tasks_finished', calls)
+
+    def test_failure_result_is_safe_for_ros_xmlrpc_parameters(self):
+        method_source = ast.get_source_segment(
+            self.source, self.methods['_moon_failure_result']
+        )
+        self.assertIn("'class_id': -1", method_source)
+        self.assertNotIn("'class_id': None", method_source)
 
     def test_first_two_scene_points_rotate_with_expected_return_policy(self):
         calls = []
@@ -570,6 +589,22 @@ class DetectorContractTests(unittest.TestCase):
         self.assertNotIn('self._load_model()', init_source)
         self.assertIn('self._publish_status("unloaded")', init_source)
         self.assertIn('self._load_model()', start_source)
+
+    def test_detector_preload_service_loads_without_activating_a_session(self):
+        init_source = ast.get_source_segment(self.source, self.methods['__init__'])
+        preload_source = ast.get_source_segment(
+            self.source, self.methods['handle_preload']
+        )
+        self.assertIn('"/moon_detector/preload"', init_source)
+        self.assertIn('self._load_model()', preload_source)
+        self.assertNotIn('self.active = True', preload_source)
+
+    def test_detector_maps_cross_platform_checkpoint_paths_to_native_paths(self):
+        load_source = ast.get_source_segment(self.source, self.methods['_load_model'])
+        self.assertIn('_install_checkpoint_pathlib_compatibility()', load_source)
+        self.assertIn('pathlib._local', self.source)
+        self.assertIn('compat.WindowsPath = native_path', self.source)
+        self.assertIn('compat.PosixPath = native_path', self.source)
 
     def test_detector_unload_serializes_with_inference_and_clears_cuda(self):
         unload_source = ast.get_source_segment(

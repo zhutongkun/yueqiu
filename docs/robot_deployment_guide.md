@@ -4,7 +4,7 @@
 
 本指南用于把当前 ROS1/catkin 分支部署到实际 Jetson 小车。部署脚本不改变 JetPack、CUDA、TensorRT、系统 ROS、PyTorch、torchvision 或 OpenCV；如果这些组件缺失或 ABI 不兼容，脚本会停止并要求按小车现有镜像安装匹配版本。
 
-开发电脑无法连接目标小车，且本机没有 ROS1，因此以下标记为“实机”的步骤尚未在本次开发环境执行。执行后应把原始输出补入 `docs/runtime_environment_report.md` 和 `docs/moon_competition_test_report.md`。
+当前目标 Orin Nano 的 `/home/ubuntu/ros_ws` 已完成 Moon CPU 原生加载、预加载服务、无运动完整 launch、136 项自动测试和 `catkin build competition -j4 -l4`。以下安全检查仍应在每次换车、换卡、换地图或更新依赖后重新执行；真实驾驶、机械臂、坡面、返航和声卡全流程仍需现场验收。
 
 ## 2. 部署前安全准备
 
@@ -130,7 +130,9 @@ rostopic info /gemini_camera/depth/image_raw
 rostopic info /scan
 rostopic info /odom
 rosservice type /competition/stop_mission
+rosservice type /moon_detector/preload
 rosservice type /moon_detector/start
+rosservice type /moon_detector/unload
 rosservice type /position_correction/start
 rosservice type /shape_recognition/start
 rosservice type /ramp/start
@@ -173,13 +175,19 @@ cd "$MOON_WORKSPACE"
 
 主节点等待语音开始命令；15 秒没有收到命令时只自动启动一次。第 14.9 秒语音和 Timer 同时到达时，带锁入口只接受一个请求。
 
-旧三分类 TensorRT engine 会在启动窗口打开前预热。此阶段底盘保持零速度，首次启动可能持续数秒到数十秒；只有依次看到以下日志后，15 秒语音/自动启动计时才开始：
+旧三分类 TensorRT engine 和 Moon CPU 模型都会在启动窗口打开前预热。此阶段底盘保持零速度，通常需要十余秒；只有依次看到以下日志和中文完成横幅后，才进行语音唤醒。15 秒自动启动计时也从横幅前的初始化完成点开始，不包含模型预热时间：
 
 ```text
 Preloading YOLOv5 TensorRT before mission start; the robot remains stopped
-YOLOv5 TensorRT prewarm complete; the one-shot start window is now enabled
+YOLOv5 TensorRT prewarm complete
+Preloading Moon scene-card model before mission start; the robot remains stopped
+Moon scene-card model prewarm complete
+系统启动完成：导航、机械臂和视觉模块已就绪，小车当前保持停车
+请现在说“小麦小麦”唤醒，然后说“开始执行任务”
 Competition controller is waiting for its one start trigger
 ```
+
+目标 Orin 的 Moon 默认配置是 `device: cpu`。实测 CPU 预加载约 6.4-9.5 秒，推理平均约 0.84 秒/帧；GPU 冷加载约 89.5 秒且双模型同时驻留会开始使用 swap，因此不要在比赛现场临时改回 `device:auto` 或 `device:0`。
 
 安全诊断时可完全关闭语音和自动启动，程序只初始化设备、RViz、导航与视觉，不执行比赛动作：
 
@@ -299,7 +307,7 @@ Moon 的 `best.pt`、engine 或配置绝不能覆盖原矿石三分类的 `shape
 - ROS1 发行版、Jetson 型号、JetPack、CUDA、TensorRT、PyTorch、OpenCV 和 cv_bridge 已记录。
 - catkin 编译通过，比赛 launch 无缺包错误。
 - 相机、雷达、里程计、底盘、机械臂、麦克风和声卡接口已确认。
-- `best.pt` 原生加载、CPU/GPU 推理和十类映射通过。
+- `best.pt` 原生 CPU 加载、十类映射和真实卡片逐类推理通过；当前默认方案不要求 Moon GPU 推理。
 - 三个识别点独立，现场不播报，第三点后继续剩余任务。
 - 两次夹取、两次放置、坡面和机械臂收尾均完成后才返航。
 - 真实到达基地并停车后，按 1、2、3 集中播报。

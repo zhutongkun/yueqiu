@@ -92,6 +92,15 @@ class LaunchAndConfigContractTests(unittest.TestCase):
         self.assertIn('<arg name="enable_timeout_auto_start" default=""/>', main_launch)
         self.assertIn('/competition_mission/enable_timeout_auto_start', main_launch)
 
+    def test_moon_cpu_model_is_prewarmed_before_the_start_window(self):
+        self.assertIn('device: "cpu"', source(DETECTOR_CONFIG))
+        mission_config = source(MISSION_CONFIG)
+        self.assertIn('prewarm_moon_before_start: true', mission_config)
+        self.assertGreaterEqual(
+            numeric_config_value(MISSION_CONFIG, 'moon_prewarm_timeout'),
+            30.0,
+        )
+
     def test_stage_caps_fit_exactly_inside_the_body_budget(self):
         mission_timeout = numeric_config_value(
             MISSION_CONFIG, 'mission_timeout_seconds'

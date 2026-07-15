@@ -4,7 +4,7 @@
 
 `runs/moon/weights/best.pt` 的文件大小和 SHA256 与用户给定值完全一致；checkpoint 的归档结构、张量、类别元数据和数值推理已检查。对 71 张验证图进行 OpenCV DNN 数值验证时，71/71 的主目标类别与标签一致。
 
-这不等于目标 Jetson 上的原生 PyTorch/ROS/GPU 验证已经通过。当前 Windows 默认 Python 没有 `torch`，目标小车也不可达，因此 `torch.load`/YOLOv5 `DetectMultiBackend` 原生加载、Jetson CUDA 推理和 TensorRT 均标记为“需要小车实机确认”。
+目标 Jetson Orin Nano 已使用仓库内 YOLOv5 的 `DetectMultiBackend` 在 CPU 原生加载该权重，确认 10 个类别名称及顺序完全一致，并完成单图推理和 ROS 服务链路验证。GPU 冷加载与资源占用已测，但没有把 GPU 十类严格推理写成通过；真实比赛卡片和场地背景仍需现场验证。
 
 为使验证不再依赖外部完整数据集，仓库现在保存十类各一张验证图片及 `bus.jpg`、`zidane.jpg` 两张代理负样本，位于 `src/competition/models/moon/validation_samples/`。`manifest.json` 固定类别 ID、中英文名称、原验证集文件名、YOLO 真值框、图片尺寸和 SHA256；2026-07-13 已对 12 张图片重新执行静态资产校验并通过。该小型样本集只用于部署冒烟验证，不替代 354 张原始训练/验证数据集。
 
@@ -64,7 +64,7 @@ Moon ZIP 中没有 ONNX 或 TensorRT engine；包含 `best.pt`、`last.pt`、`yo
 
 ## 4. 模型结构和加载验证方法
 
-受限开发环境缺少 PyTorch。验证过程没有伪称 `torch.load(best.pt)` 成功，也没有生成 ONNX 文件。实际采用以下只读方法：
+开发机的初始离线验证环境缺少 PyTorch，因此先采用以下只读方法，没有生成 ONNX 文件：
 
 1. 校验 `best.pt` 文件大小与 SHA256。
 2. 解析 PyTorch checkpoint 归档，读取模型元数据和状态张量。
@@ -72,7 +72,7 @@ Moon ZIP 中没有 ONNX 或 TensorRT engine；包含 `best.pt`、`last.pt`、`yo
 4. 使用同一组张量权重完成数值前向、YOLO 解码和 NMS。
 5. 对全部 71 张验证图运行推理并与 YOLO 标签对照。
 
-由此可确认 checkpoint 不是空文件/截断文件，十类输出结构与权重数值可用。目标部署仍必须在 Jetson 的实际 PyTorch/YOLOv5 环境执行原生加载测试。
+由此可确认 checkpoint 不是空文件/截断文件，十类输出结构与权重数值可用。随后已在目标 Jetson 的实际 PyTorch/YOLOv5 环境完成原生 CPU 加载和推理验证。
 
 上述 OpenCV DNN 路径是本次开发机分析阶段的一次数值验证，不是目标部署运行时。仓库内可重复入口为 `tools/validate_moon_assets.py`：它默认无需外部数据集即可重新检查模型大小/SHA256、manifest、十类代表样本和两张负样本；指定严格推理参数时才加载 YOLOv5/PyTorch。vendored YOLOv5 的运行时自动 `pip install` 已移除，依赖损坏时该工具和 ROS 检测节点都会明确失败。
 
@@ -134,7 +134,18 @@ python tools/validate_moon_assets.py --require-gpu-inference
 
 两条命令都无需外部数据集，并严格要求十类逐类预测正确；`bus.jpg` 或 `zidane.jpg` 在置信度阈值 0.70 下出现任意检测都会令命令失败并返回非零退出码。还可使用 `--require-inference --device auto|cpu|0` 选择单一设备，并用 `--output-json` 保存机器可读报告。
 
-当前 Windows 默认 Python 3.11 环境实际探测结果为 `torch`、`cv2`、`numpy`、`ultralytics` 均不可导入。CPU 和 GPU 严格命令均已实际运行并以退出码 2 失败，首个明确原因是 `ModuleNotFoundError: No module named 'cv2'`；因此本报告不把原生 PyTorch CPU/GPU 推理写成通过。相关 7 项工具单元测试通过，其中包含 0.71 负样本误报故障注入，证明严格失败分支有效，但模拟测试不替代真实模型推理。
+当前 Windows 默认 Python 3.11 环境实际探测结果为 `torch`、`cv2`、`numpy`、`ultralytics` 均不可导入。CPU 和 GPU 严格命令均已实际运行并以退出码 2 失败，首个明确原因是 `ModuleNotFoundError: No module named 'cv2'`；因此仅 Windows 开发机上的原生 PyTorch 推理不标记为通过。相关 7 项工具单元测试通过，其中包含 0.71 负样本误报故障注入，证明严格失败分支有效，但模拟测试不替代下述目标机实测。
+
+目标 Orin Nano 的补充实测结果：
+
+- checkpoint SHA256 仍为 `ab953a754cc6ea68742d49ccf26d8b122bb771fe65aa6bd582761bdeaaa7da34`。
+- `DetectMultiBackend` CPU 加载成功，类别严格为 `satellite, space_station, lunar_crater, lunar_rover, meteorite, earth, lunar_soil, moon, rocket, astronaut`。
+- 独立 CPU 模型加载约 9.494 秒；ROS 节点内 `/moon_detector/preload` 约 6.371 秒。
+- 640x640 CPU 推理平均约 0.840 秒/帧、最大约 0.936 秒/帧；取得四票的估算时间约 3.238 秒。
+- 预加载后的 `/moon_detector/start` 约 1.523 秒，随后 `/stop` 和 `/unload` 均成功。
+- GPU 首次加载约 89.5 秒；旧 TensorRT 与 Moon GPU 同时驻留时约使用 6.0/7.3 GiB 内存，只剩约 940 MiB 可用并使用约 496 MiB swap，因此生产配置固定为 CPU。
+
+首次 ROS 加载曾失败于 `ModuleNotFoundError: No module named 'pathlib._local'; 'pathlib' is not a package`。checkpoint 是由较新的 Windows Python 保存的，pickle 引用了 `pathlib._local.WindowsPath`；目标 Linux Python 3.8 既没有该子模块，也不能实例化 WindowsPath。检测节点现在把 checkpoint 中的 Windows/Posix 具体路径类兼容映射到当前系统原生路径类，模型文件本身未被修改。
 
 ## 8. 风险控制参数
 
@@ -159,8 +170,8 @@ python tools/validate_moon_assets.py --require-gpu-inference
 
 ## 10. 必须上车补测
 
-- `torch.load`/YOLOv5 `DetectMultiBackend` 原生加载。
-- Jetson CPU 与 CUDA 单图推理、十类抽样和持续帧率。
+- 使用十类真实比赛卡片完成目标 Orin CPU 逐类抽样和持续帧率验证。
+- 如未来重新评估 GPU，再执行 CUDA 十类严格推理；当前比赛默认 CPU，不依赖 GPU Moon 推理。
 - Astra 实际 RGB 话题编码、分辨率和 `cv_bridge` 转换。
 - 真实场地负样本和不同光照、距离、角度、遮挡。
 - 三个真实任务点的 7 帧投票稳定性与 15 秒超时。

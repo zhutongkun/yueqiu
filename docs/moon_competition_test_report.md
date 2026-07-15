@@ -1,14 +1,15 @@
 # 月球探索比赛测试报告
 
-检查日期：2026-07-13（Asia/Shanghai）
+检查日期：2026-07-15（Asia/Shanghai）
 
 ## 1. 当前测试边界
 
-当前可访问环境是 Windows 开发电脑，不是目标 Ubuntu/Jetson 小车；本机没有 ROS1、catkin、可用的目标相机、底盘、机械臂和离线声卡链路，目标小车也无法从本机连通。因此本报告区分开发机验证和实机验收，绝不把静态检查或模拟测试写成 catkin/实车通过。
+本次同时使用 Windows 开发电脑和目标 Jetson Orin Nano。Windows 侧执行静态检查、资源验证和 ROS 无关测试；目标机 `/home/ubuntu/ros_ws` 执行 ROS 服务、Moon CPU 模型、无运动 launch、自动测试和 catkin 编译。完整导航、机械臂、坡面、返航、真实比赛卡片和声卡播报尚未跑完整比赛，因此仍单独标记为现场验收项。
 
 状态说明：
 
 - `开发机已验证`：已有实际命令、测试或模型验证证据。
+- `目标机已验证`：已在当前 Jetson/ROS 工作空间执行并保存实际输出。
 - `待执行`：需要补充测试夹具或完整集成运行。
 - `需要小车实机确认`：依赖 ROS 图、Jetson、导航、执行器、相机、音频或 systemd。
 - `部分验证`：开发机已有一部分证据，但尚未满足最终实机门槛。
@@ -24,13 +25,13 @@
 | 3 | YAML 解析 | 临时隔离安装的 PyYAML 6.0.3 实测解析两个 Moon 配置，均为有效字典 | 开发机已验证 |
 | 4 | shell `bash -n` | Git for Windows Bash 实测五个部署脚本，退出码 0 | 开发机已验证 |
 | 5 | `package.xml` | .NET XML 解析实测通过；ROS 依赖解析仍由 catkin 验证 | 开发机已验证 |
-| 6 | `CMakeLists.txt` | 静态确认四个运行脚本、资源安装规则和主控制所需 catkin 依赖；真正配置仍由 catkin 验证 | 部分验证，需实机确认 |
-| 7 | catkin 编译 | 在目标 ROS1 工作空间执行 `catkin_make` | 需要小车实机确认 |
+| 6 | `CMakeLists.txt` | 静态规则检查通过，并由目标机 `catkin build` 实际完成配置与构建 | 目标机已验证 |
+| 7 | catkin 编译 | 目标机执行 `catkin build competition -j4 -l4`，competition 及 10 个相关包全部成功 | 目标机已验证 |
 | 8 | 绝对路径检查 | 实测搜索新增脚本/文档，无 Windows 用户路径或固定 Linux 用户家目录 | 开发机已验证 |
 | 9 | 模型 SHA256 | 独立资源测试实测为 `ab953a...7da34`，大小 14,438,056 bytes | 开发机已验证 |
-| 10 | 模型加载 | checkpoint 归档和 OpenCV DNN 已加载；原生 PyTorch/Jetson 加载尚未完成 | 部分验证，需实机确认 |
+| 10 | 模型加载 | checkpoint/OpenCV DNN 加载通过；目标 Orin `DetectMultiBackend` CPU 加载和 `/moon_detector/preload` 通过 | 目标机已验证 |
 | 11 | 十类映射 | checkpoint、数据 YAML、标签与规定 ID 0-9 一致 | 开发机已验证 |
-| 12 | 单图推理 | OpenCV DNN 数值前向已执行，非只读训练日志 | 开发机已验证 |
+| 12 | 单图推理 | 开发机 OpenCV DNN 数值前向和目标 Orin CPU 单图推理均已执行 | 目标机已验证 |
 | 13 | 十类抽样 | 71 张验证图覆盖十类，主目标映射 71/71 一致 | 开发机已验证 |
 | 14 | 背景误报 | 代理背景已测；真实赛场、曝光和距离背景尚缺 | 部分验证，需实机确认 |
 | 15 | 多帧投票 | `MultiFrameVoter` 稳定票数测试包含在 28 项单元测试中 | 开发机已验证 |
@@ -76,15 +77,15 @@
 
 ```text
 python -m unittest discover -s src/competition/tests -p "test_*.py" -v
-Ran 130 tests
+Ran 136 tests
 OK
 ```
 
-130 项由以下部分组成：
+136 项由以下部分组成：
 
 - 4 项资源测试：`best.pt` 大小/SHA256、十类文件顺序、vendored YOLOv5 文件和无嵌套 `.git`、16 个单声道 16-bit PCM WAV。
-- 69 项控制器/检测器/辅助节点契约测试：第三点后原流程、前两点转向及第二点回转、转向先于视觉服务、第二次放置、坡面完成门禁、单次坡面穿越、最终 move_base、统一异常清理、关闭节点、播报顺序、一次性 Timer、统一启动入口、语音开关、比赛启动窗口前 TensorRT 预热、手工服务互斥、分层动作超时与阶段取消、迟到服务单次中和、夹取点视觉预热与停车后 `pick`、形状会话缓存清空、支持节点初始化截止、可移植 LAB 配置路径、安全臂等待、禁止运行时 pip 安装、Moon 懒加载/卸载和旧 TensorRT CUDA context 释放竞态/构造失败清理。
-- 16 项部署契约测试：launch/YAML 覆盖优先级、无运动诊断启动开关、Moon 转向参数、主体七阶段上限合计 390 秒、返航/播报窗口不突破 450 秒、ROS/catkin 依赖、install-space 资产、Python 3.8 门禁、ROS underlay/build tool 选择、固定依赖版本、运行时禁止联网安装和安全停止卸载两个视觉模型。
+- 74 项控制器/检测器/辅助节点契约测试：第三点后原流程、前两点转向及第二点回转、转向先于视觉服务、第二次放置、坡面完成门禁、单次坡面穿越、最终 move_base、统一异常清理、关闭节点、播报顺序、一次性 Timer、统一启动入口、语音开关、比赛启动窗口前两个模型的预热、ROS 参数可序列化失败结果、跨平台 pathlib checkpoint 兼容、手工服务互斥、分层动作超时与阶段取消、夹取点视觉预热与停车后 `pick`、禁止运行时 pip 安装和视觉资源卸载。
+- 17 项部署契约测试：launch/YAML 覆盖优先级、Moon CPU 默认设备、启动窗口前预加载、无运动诊断启动开关、Moon 转向参数、主体七阶段上限合计 390 秒、返航/播报窗口不突破 450 秒、ROS/catkin 依赖、install-space 资产、Python 3.8 门禁、ROS underlay/build tool 选择、固定依赖版本、运行时禁止联网安装和安全停止卸载两个视觉模型。
 - 34 项 ROS 无关核心测试：启动竞争、终态拒绝、三个结果、返航/播报 one-shot、450/390 秒预算与阶段截断、多帧投票、冲突/超时和原子 JSON。
 - 7 项可部署验证工具测试：manifest 十类映射、12 张样本资产、路径边界、严格正样本匹配及 0.70 阈值负样本误报失败。
 
@@ -158,7 +159,7 @@ Moon 数据集已重新实际统计，结果为：
 - 模型文件大小、SHA256、十类顺序和开发机数值推理已有证据。
 - Git for Windows Bash 对五个部署脚本执行 `bash -n` 通过。
 - 主程序、检测节点、核心模块和测试文件 `py_compile` 通过。
-- 自动测试实际运行 130 项，全部通过。
+- 自动测试在开发机和目标机分别实际运行 136 项，全部通过。
 - 30 秒实时重复启动回归通过，完成态和执行次数保持不变。
 - 任务启动后的硬截止为 450 秒，主体截止为 390 秒；返航最多使用随后 40 秒，最后 20 秒留给基地播报。所有阶段和内部等待均受更短截止约束。
 - 两次夹取均在夹取导航点调用 `/shape_recognition/start` 预热，最后靠近后再次停车才调用 `/shape_recognition/pick`；用户日志中的 `place_3 -> pick2 -> safe_pick` 是两个连续任务，不是放置动作启动识别。
@@ -171,7 +172,7 @@ Moon 数据集已重新实际统计，结果为：
 
 目标机为 NVIDIA Jetson Orin Nano Developer Kit、JetPack 5.1.3、L4T 35.5.0、ROS Noetic，真实工作空间为 `/home/ubuntu/ros_ws`。故障运行中，主控已输出等待单次启动触发，15 秒 Timer 接受启动后在 `initial departure` 第一行同步调用 `/yolov5/start`；配置只允许 12 秒，而旧 `shape_models.engine` 首次加载仍在初始化 cuBLAS/cuDNN，随后主控将其误判为初始驶离失败并进入 ERROR。后续视觉 stop/unload 警告是取消清理的连锁结果，不是最初根因。
 
-修复后，主控在订阅开始语音、设置 `initialization_complete` 和创建 15 秒一次性 Timer 之前调用 `/yolov5/start`，最多等待 90 秒；加载成功后立即调用 `/yolov5/stop` 暂停推理，但保留 engine、CUDA context 和相机订阅。只有看到 `YOLOv5 TensorRT prewarm complete; the one-shot start window is now enabled` 后，语音/Timer 启动窗口才开始，因此预热时间不进入 450 秒比赛任务预算。
+修复后，主控在订阅开始语音、设置 `initialization_complete` 和创建 15 秒一次性 Timer 之前调用 `/yolov5/start`，最多等待 90 秒；加载成功后立即调用 `/yolov5/stop` 暂停推理，但保留 engine、CUDA context 和相机订阅。随后还会完成 Moon CPU 预加载；只有看到中文“系统启动完成”横幅后才允许语音唤醒，模型预热时间不进入 450 秒比赛任务预算。
 
 两次无运动 probe 均使用：
 
@@ -191,7 +192,38 @@ roslaunch competition position_correction_pick.launch \
 
 旧三分类 engine 仍打印“跨设备使用 engine plan 不推荐”。仓库和目标机没有找到该 engine 对应的 ONNX/WTS/PT 源文件，因此不能在缺少源模型和回归数据时擅自重建。当前证据只证明它在本车成功加载并执行短时推理，不消除 TensorRT 可移植性风险。讯飞日志中的 `11212` 在项目源码中被标注为 license expired；这不会阻止一次性 15 秒自动启动或 `/competition/start_mission` 服务启动，但真实语音识别需要更新合法的离线授权资源后再验收。
 
-## 8. 实机测试记录模板
+## 8. 2026-07-15 Moon checkpoint 兼容与预加载回归
+
+故障日志先出现：
+
+```text
+ModuleNotFoundError: No module named 'pathlib._local'; 'pathlib' is not a package
+cannot marshal None unless allow_none is enabled
+```
+
+第一项根因是 `best.pt` 由较新的 Windows Python 保存，pickle 引用了 `pathlib._local.WindowsPath`；目标 Linux Python 3.8 的 `pathlib` 是单模块，且 Linux 不能直接实例化 `WindowsPath`。检测节点现在在反序列化前提供兼容模块，并把 Windows/Posix 具体路径类型都映射为当前主机原生路径类型。第二项根因是 Moon 失败结果把 `class_id` 写成 `None`，而 ROS 参数服务器 XML-RPC 不允许该值；失败结果现使用明确哨兵值 `-1`。
+
+为避免第一次场景识别时冷加载，新增 `/moon_detector/preload`。主控先预热旧三分类 TensorRT，再预加载 Moon CPU 模型，最后才创建语音订阅和 15 秒一次性 Timer。无运动验证命令为：
+
+```bash
+roslaunch competition position_correction_pick.launch \
+  enable_timeout_auto_start:=false enable_voice:=false
+```
+
+实际启动顺序和证据：
+
+- 旧 YOLO 预热：`1784131817.260` 至 `1784131822.902`。
+- Moon CPU 预热：`1784131822.908` 至 `1784131830.115`。
+- 中文“系统启动完成”横幅：`1784131831.794`，随后状态保持 `WAITING_FOR_START`，没有执行比赛动作。
+- CPU 模型加载约 6.371-9.494 秒；640x640 推理平均 0.840 秒/帧、最大 0.936 秒/帧；预加载后的 `/moon_detector/start` 约 1.523 秒。
+- GPU 首次加载约 89.5 秒；与旧 TensorRT 同时驻留时约使用 6.0/7.3 GiB 内存、只剩约 940 MiB 可用并使用约 496 MiB swap，所以默认改为 CPU。
+- `/moon_detector/preload/start/stop/unload` 全部返回成功；修复后日志中没有再次出现 `pathlib._local`、`cannot marshal None` 或 Moon model load failure。
+- 目标机 136 项自动测试全部通过；`catkin build competition -j4 -l4` 的 10 个相关包全部成功。
+- probe 由测试超时主动终止，随后确认无 ROS 残留进程，`start_app_node.service` 保持 inactive。
+
+这次回归证明节点可以完成安全初始化和识别服务启动，不等于完整比赛验收。十类真实卡片、三个现场识别点、完整驾驶/机械臂/坡面、基地返航和离线播报仍需实车确认。
+
+## 9. 实机测试记录模板
 
 每次实机运行至少保存：
 

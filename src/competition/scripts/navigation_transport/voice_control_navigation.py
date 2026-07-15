@@ -230,6 +230,12 @@ class VoiceControlNavNode(MissionLifecycle):
         self.moon_start_timeout = float(
             self._mission_param('moon_start_timeout', 12.0)
         )
+        self.prewarm_moon_before_start = bool(
+            self._mission_param('prewarm_moon_before_start', True)
+        )
+        self.moon_prewarm_timeout = float(
+            self._mission_param('moon_prewarm_timeout', 60.0)
+        )
         self.moon_unload_timeout = float(
             self._mission_param('moon_unload_timeout', 5.0)
         )
@@ -387,6 +393,7 @@ class VoiceControlNavNode(MissionLifecycle):
                 self._wait_for_voice_initialisation()
             self._wait_for_navigation_initialisation()
             self._prewarm_yolo_for_mission()
+            self._prewarm_moon_detector_for_mission()
             if self.enable_voice:
                 self.vc_sub = rospy.Subscriber(
                     '/asr_node/voice_words', String, self.words_callback
@@ -676,9 +683,30 @@ class VoiceControlNavNode(MissionLifecycle):
             raise RuntimeError('YOLOv5 prewarm completed but pause failed')
         self._yolo_preloaded = True
         self.safe_stop_robot()
+        rospy.loginfo('YOLOv5 TensorRT prewarm complete')
+
+    def _prewarm_moon_detector_for_mission(self):
+        """Load the Moon CPU model before accepting the one-shot mission trigger."""
+        if not self.prewarm_moon_before_start:
+            rospy.logwarn(
+                'Moon detector prewarm is disabled; the first scene session may '
+                'include model cold-start latency'
+            )
+            return
+        self.safe_stop_robot()
         rospy.loginfo(
-            'YOLOv5 TensorRT prewarm complete; the one-shot start window is now enabled'
+            'Preloading Moon scene-card model before mission start; the robot remains stopped'
         )
+        response = self.call_trigger(
+            '/moon_detector/preload',
+            timeout=self.moon_prewarm_timeout,
+            enforce_mission_budget=False,
+        )
+        if response is None or not response.success:
+            message = response.message if response is not None else 'service timed out'
+            raise RuntimeError('Moon detector prewarm failed: %s' % message)
+        self.safe_stop_robot()
+        rospy.loginfo('Moon scene-card model prewarm complete')
 
     def schedule_start_timeout(self):
         self.cancel_start_timeout()
@@ -1545,7 +1573,7 @@ class VoiceControlNavNode(MissionLifecycle):
             'task_point_name': TASK_POINT_NAME[task_point_index],
             'session_id': session_id,
             'status': status,
-            'class_id': None,
+            'class_id': -1,
             'class_name_en': '',
             'class_name_cn': '',
             'confidence': 0.0,

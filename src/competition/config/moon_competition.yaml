@@ -22,6 +22,8 @@ moon_rotation_speed: 0.5
 moon_detection_timeout: 12.0
 maximum_result_age: 5.0
 moon_start_timeout: 12.0
+prewarm_moon_before_start: true
+moon_prewarm_timeout: 60.0
 moon_unload_timeout: 5.0
 place_service_timeout: 8.0
 correction_status_timeout: 15.0

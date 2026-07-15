@@ -9,9 +9,11 @@ import datetime
 import gc
 import json
 import os
+import pathlib
 import sys
 import threading
 import traceback
+import types
 
 import rospy
 from cv_bridge import CvBridge, CvBridgeError
@@ -58,6 +60,37 @@ CLASS_NAMES_CN = [
     "火箭",
     "宇航员",
 ]
+
+
+def _install_checkpoint_pathlib_compatibility():
+    """Map Python 3.13 cross-platform checkpoint paths to this host's path type."""
+    if hasattr(pathlib, "__path__"):
+        try:
+            __import__("pathlib._local")
+            return False
+        except ImportError:
+            pass
+
+    module_name = "pathlib._local"
+    compat = sys.modules.get(module_name)
+    if compat is None:
+        compat = types.ModuleType(module_name)
+        sys.modules[module_name] = compat
+
+    native_path = pathlib.WindowsPath if os.name == "nt" else pathlib.PosixPath
+    native_pure_path = (
+        pathlib.PureWindowsPath if os.name == "nt" else pathlib.PurePosixPath
+    )
+    compat.Path = pathlib.Path
+    compat.PosixPath = native_path
+    compat.WindowsPath = native_path
+    compat.PurePath = pathlib.PurePath
+    compat.PurePosixPath = native_pure_path
+    compat.PureWindowsPath = native_pure_path
+    pathlib._local = compat
+    if not hasattr(pathlib, "__path__"):
+        pathlib.__path__ = []
+    return True
 
 
 class MoonDetector(object):
@@ -163,6 +196,9 @@ class MoonDetector(object):
         self.reset_service = rospy.Service(
             "/moon_detector/reset", Trigger, self.handle_reset
         )
+        self.preload_service = rospy.Service(
+            "/moon_detector/preload", Trigger, self.handle_preload
+        )
         self.start_service = rospy.Service(
             "/moon_detector/start", Trigger, self.handle_start
         )
@@ -238,6 +274,11 @@ class MoonDetector(object):
                 except ImportError:
                     from utils.general import scale_coords as scale_boxes
                 from utils.torch_utils import select_device
+
+                if _install_checkpoint_pathlib_compatibility():
+                    rospy.logwarn(
+                        "Enabled pathlib checkpoint compatibility for the target Python runtime"
+                    )
 
                 requested_device = self.device_setting.strip().lower()
                 if requested_device in ("", "auto"):
@@ -413,6 +454,19 @@ class MoonDetector(object):
         self.finished_pub.publish(Bool(data=False))
         self._publish_status(status)
         return TriggerResponse(success=True, message="moon detector session reset")
+
+    def handle_preload(self, _request):
+        with self.lock:
+            if self.active:
+                return TriggerResponse(
+                    success=False,
+                    message="cannot preload during an active detection session",
+                )
+        if not self._load_model():
+            with self.lock:
+                message = self.model_error
+            return TriggerResponse(success=False, message=message)
+        return TriggerResponse(success=True, message="moon detector model preloaded")
 
     def handle_start(self, _request):
         try:
