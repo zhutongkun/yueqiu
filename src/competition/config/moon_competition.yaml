@@ -1,0 +1,103 @@
+enable_timeout_auto_start: true
+start_timeout_seconds: 15.0
+enable_voice: true
+voice_init_timeout: 20.0
+initialization_timeout: 60.0
+
+# The hard deadline is 7m30s, leaving 30s before the official 8-minute limit.
+# Body stages can use at most 390s; the last 60s are reserved for return and speech.
+mission_timeout_seconds: 450.0
+return_reserve_seconds: 60.0
+announcement_reserve_seconds: 20.0
+deadline_warning_seconds: 90.0
+
+service_discovery_timeout: 2.0
+move_base_server_timeout: 10.0
+moon_session_timeout: 25.0
+moon_rotation_degrees: 90.0
+moon_rotation_speed: 0.5
+moon_detection_timeout: 12.0
+maximum_result_age: 5.0
+moon_start_timeout: 12.0
+prewarm_moon_before_start: true
+moon_prewarm_timeout: 60.0
+moon_unload_timeout: 5.0
+place_service_timeout: 8.0
+correction_status_timeout: 15.0
+shape_start_timeout: 3.0
+shape_pick_service_timeout: 4.0
+shape_pick_timeout: 18.0
+shape_pick_stage_timeout: 25.0
+shape_stop_timeout: 1.0
+shape_warmup_seconds: 0.5
+yolo_detection_timeout: 8.0
+yolo_start_timeout: 12.0
+# The vendor TensorRT engine takes about 40s to cold-load on the Orin Nano.
+# Load it before the 15s voice/timeout start window, then keep it paused in memory.
+prewarm_yolo_before_start: true
+yolo_prewarm_timeout: 90.0
+yolo_unload_timeout: 5.0
+audio_playback_timeout: 4.0
+
+# Aggregate stage caps. The mission-wide deadline still wins when less time remains.
+initial_stage_timeout: 20.0
+detect_stage_timeout: 50.0
+pick_stage_timeout: 85.0
+place_stage_timeout: 45.0
+remaining_tasks_timeout: 60.0
+return_stage_timeout: 40.0
+announcement_stage_timeout: 20.0
+
+voice_volume: 100
+# The baseline mission uses laser-corrected reverse traversal. Enable only after
+# the depth-alignment orientation is verified on the target robot.
+use_ramp_alignment_service: false
+enable_manual_debug_services: true
+
+# The ramp is invisible in the 2D occupancy map. Unexpected tilt cancels only the
+# current goal, drives opposite to the latest motion, and then retries navigation.
+enable_tilt_guard: true
+imu_topic: "/imu"
+unexpected_tilt_limit_degrees: 8.0
+controlled_ramp_tilt_limit_degrees: 25.0
+tilt_violation_samples: 5
+tilt_recovery_speed: 0.12
+tilt_recovery_timeout: 3.0
+tilt_recovery_min_duration: 0.6
+tilt_recovery_level_degrees: 5.0
+tilt_recovery_level_samples: 3
+tilt_recovery_max_attempts: 2
+tilt_command_max_age: 0.75
+
+# Keep the original open-loop departure and turn. These waypoints constrain all
+# later move_base routes to the flat negative-Y side of the starting ramp.
+enable_ramp_clearance_waypoints: true
+departure_ramp_clearance_pose:
+  x: 0.9
+  y: -0.7
+  yaw: -90.0
+place_ramp_clearance_pose:
+  x: 1.45
+  y: -0.75
+  yaw: 90.0
+pick_ramp_clearance_pose:
+  x: 1.45
+  y: -0.75
+  yaw: -90.0
+
+# These poses must be checked against the final competition map on the robot.
+base_pose:
+  x: 0.0
+  y: 0.0
+  yaw: 0.0
+
+# Current source and the implementation guide both approach the return ramp here.
+ramp_approach_pose:
+  x: 1.3
+  y: 0.0
+  yaw: 0.0
+
+ramp_return_distance: 1.3
+ramp_return_speed: 0.25
+ramp_return_timeout: 15.0
+ramp_alignment_timeout: 20.0

@@ -8,9 +8,25 @@ project(competition)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
+  actionlib
+  actionlib_msgs
+  cv_bridge
+  geometry_msgs
+  interfaces
+  kinematics
+  message_filters
+  move_base_msgs
+  nav_msgs
   roscpp
+  ros_robot_controller
   rospy
+  sdk
+  sensor_msgs
+  servo_controllers
+  servo_msgs
   std_msgs
+  std_srvs
+  xf_mic_asr_offline
 )
 
 ## System dependencies are found with CMake's conventions
@@ -105,7 +121,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES competition
-#  CATKIN_DEPENDS roscpp rospy std_msgs
+  CATKIN_DEPENDS actionlib actionlib_msgs cv_bridge geometry_msgs interfaces kinematics message_filters move_base_msgs nav_msgs roscpp ros_robot_controller rospy sdk sensor_msgs servo_controllers servo_msgs std_msgs std_srvs xf_mic_asr_offline
 #  DEPENDS system_lib
 )
 
@@ -159,10 +175,48 @@ include_directories(
 
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
-# catkin_install_python(PROGRAMS
-#   scripts/my_python_script
-#   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-# )
+# Preserve the source Python 3 shebangs. catkin_install_python rewrites them to
+# the interpreter used to configure the workspace, which can be Python 2 in a
+# ROS Melodic underlay even though the Moon runtime requires Python >= 3.8.
+install(PROGRAMS
+  src/search_kinematics_solutions_node.py
+  scripts/navigation_transport/voice_control_navigation.py
+  scripts/navigation_transport/moon_detector.py
+  scripts/navigation_transport/moon_mission_core.py
+  scripts/navigation_transport/calibration_position/automatic_pick.py
+  scripts/navigation_transport/ramp/ramp.py
+  scripts/navigation_transport/shape_recognition/shape_recognition_down.py
+  scripts/navigation_transport/yolo5/yolov5_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+# These modules are imported next to their installed node entry points.
+install(FILES
+  scripts/navigation_transport/shape_recognition/tone.py
+  scripts/navigation_transport/yolo5/yolov5_trt_6_2.py
+  scripts/navigation_transport/yolo5/shape_models.engine
+  scripts/navigation_transport/yolo5/shape_models_libmyplugins.so
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+# The production launch lives with the historical navigation scripts in the
+# source tree, but roslaunch must also be able to find it in install space.
+install(FILES
+  scripts/navigation_transport/position_correction_pick.launch
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+)
+
+install(DIRECTORY
+  config
+  launch
+  models
+  third_party
+  voice
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+  PATTERN ".git" EXCLUDE
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE
+)
 
 ## Mark executables for installation
 ## See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_executables.html

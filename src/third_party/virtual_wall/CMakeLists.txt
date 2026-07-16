@@ -127,7 +127,7 @@ add_library(virtual_wall
   src/virtual_wall.cpp
 )
 
-add_dependencies(virtual_wall ${catkin_EXPORTED_TARGETS})
+add_dependencies(virtual_wall ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 target_link_libraries(virtual_wall ${catkin_LIBRARIES})
 

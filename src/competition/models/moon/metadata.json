@@ -1,0 +1,26 @@
+{
+  "description": "Lunar scene-element card detector",
+  "model": "YOLOv5s",
+  "weights": "best.pt",
+  "size_bytes": 14438056,
+  "sha256": "ab953a754cc6ea68742d49ccf26d8b122bb771fe65aa6bd582761bdeaaa7da34",
+  "input_size": 640,
+  "training_epochs": 100,
+  "classes": [
+    "satellite",
+    "space_station",
+    "lunar_crater",
+    "lunar_rover",
+    "meteorite",
+    "earth",
+    "lunar_soil",
+    "moon",
+    "rocket",
+    "astronaut"
+  ],
+  "validation_limitations": [
+    "No independent test split",
+    "No dedicated no-card negative samples",
+    "Jetson PyTorch, CUDA, TensorRT, camera background, and latency require robot validation"
+  ]
+}

@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Empty arguments preserve config/moon_detector.yaml as the default source. -->
+  <arg name="model_path" default=""/>
+  <arg name="yolov5_repo" default=""/>
+  <arg name="image_topic" default=""/>
+  <arg name="publish_debug_image" default=""/>
+  <arg name="save_debug_image" default=""/>
+
+  <rosparam
+    command="load"
+    file="$(find competition)/config/moon_detector.yaml"
+    ns="moon_detector"
+    subst_value="true"/>
+
+  <node
+    pkg="competition"
+    type="moon_detector.py"
+    name="moon_detector"
+    output="screen"
+    respawn="false">
+    <param if="$(eval arg('model_path') != '')" name="model_path" value="$(arg model_path)"/>
+    <param if="$(eval arg('yolov5_repo') != '')" name="yolov5_repo" value="$(arg yolov5_repo)"/>
+    <param if="$(eval arg('image_topic') != '')" name="image_topic" value="$(arg image_topic)"/>
+    <param if="$(eval arg('publish_debug_image') != '')" name="publish_debug_image" value="$(arg publish_debug_image)"/>
+    <param if="$(eval arg('save_debug_image') != '')" name="save_debug_image" value="$(arg save_debug_image)"/>
+  </node>
+</launch>

@@ -21,9 +21,21 @@
     <!--自定义深度摄像头rgb话题名称(custom depth camera rgb topic name)-->
     <arg name="image_topic"         default="image_raw"/>
 
+    <!-- Empty values keep the YAML defaults; set only target-specific overrides. -->
+    <arg name="moon_model_path" default=""/>
+    <arg name="moon_yolov5_repo" default=""/>
+    <arg name="moon_image_topic" default=""/>
+    <arg name="moon_publish_debug_image" default=""/>
+    <arg name="moon_save_debug_image" default=""/>
+    <arg name="enable_voice" default=""/>
+    <arg name="enable_timeout_auto_start" default=""/>
+
     <rosparam file="$(find competition)/config/config.yaml" command="load"/>
-    <!--麦克风节点-->
-    <include file="$(find competition)/launch/mic_init.launch"/>
+    <rosparam file="$(find competition)/config/moon_competition.yaml" command="load" ns="competition_mission"/>
+    <param if="$(eval arg('enable_voice') != '')" name="/competition_mission/enable_voice" value="$(arg enable_voice)"/>
+    <param if="$(eval arg('enable_timeout_auto_start') != '')" name="/competition_mission/enable_timeout_auto_start" value="$(arg enable_timeout_auto_start)"/>
+    <!-- Empty/default uses YAML=true; an explicit false also avoids claiming audio hardware. -->
+    <include unless="$(eval str(arg('enable_voice')).lower() == 'false')" file="$(find competition)/launch/mic_init.launch"/>
 
     <!--读取地图节点-->
     <include file="$(find competition)/launch/include/load_map.launch">
@@ -47,6 +59,15 @@
         <param name="lib"           value="shape_models_libmyplugins.so"/>
         <param name="conf_thresh"   value="0.6"/>
     </node>
+
+    <!-- Independent lunar scene-card detector; it never controls motion or voice. -->
+    <include file="$(find competition)/launch/moon_detector.launch">
+        <arg name="model_path" value="$(arg moon_model_path)"/>
+        <arg name="yolov5_repo" value="$(arg moon_yolov5_repo)"/>
+        <arg name="image_topic" value="$(arg moon_image_topic)"/>
+        <arg name="publish_debug_image" value="$(arg moon_publish_debug_image)"/>
+        <arg name="save_debug_image" value="$(arg moon_save_debug_image)"/>
+    </include>
 
     <!--运动学节点(chassis driver)-->
     <include file="$(find competition)/launch/kinematics_node.launch">
@@ -74,12 +95,13 @@
     </group>
 
     <!--形状识别-->
-    <node name="shape_recognition" pkg="competition" type="shape_recognition_down.py" output="screen" respawn="true">
+    <node name="shape_recognition" pkg="competition" type="shape_recognition_down.py" output="screen">
     </node>
     <!--总控制-->
     <node name="voice_control_navigation" pkg="competition" type="voice_control_navigation.py" output="screen" ns='$(arg master_name)'>
         <param name="map_frame" value="$(arg map_frame)"/>
         <param name="slope_surface" value="$(arg slope_surface)"/>
+        <param name="moon_voice_dir" value="$(find competition)/voice/moon"/>
     </node>
 
     <include file="$(find competition)/launch/rviz_navigation.launch"/>

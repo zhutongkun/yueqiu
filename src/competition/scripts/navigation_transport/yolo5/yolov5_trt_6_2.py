@@ -7,7 +7,6 @@ import cv2
 import random
 import numpy as np
 import tensorrt as trt
-import pycuda.autoinit
 import pycuda.driver as cuda
 
 class Colors:
@@ -83,93 +82,120 @@ class YoLov5TRT(object):
 
         ctypes.CDLL(PLUGIN_LIBRARY)
 
-        # Create a Context on this device,
+        self.ctx = None
+        self.stream = None
+        self.context = None
+        self.engine = None
+        self.host_inputs = []
+        self.cuda_inputs = []
+        self.host_outputs = []
+        self.cuda_outputs = []
+        self.bindings = []
+
+        cuda.init()
         self.ctx = cuda.Device(0).make_context()
-        stream = cuda.Stream()
-        TRT_LOGGER = trt.Logger(trt.Logger.INFO)
-        runtime = trt.Runtime(TRT_LOGGER)
+        try:
+            stream = cuda.Stream()
+            TRT_LOGGER = trt.Logger(trt.Logger.INFO)
+            runtime = trt.Runtime(TRT_LOGGER)
 
-        # Deserialize the engine from file
-        with open(self.engine_file_path, "rb") as f:
-            engine = runtime.deserialize_cuda_engine(f.read())
-        context = engine.create_execution_context()
+            # Deserialize the engine from file.
+            with open(self.engine_file_path, "rb") as f:
+                engine = runtime.deserialize_cuda_engine(f.read())
+            if engine is None:
+                raise RuntimeError("failed to deserialize TensorRT engine")
+            context = engine.create_execution_context()
+            if context is None:
+                raise RuntimeError("failed to create TensorRT execution context")
 
-        host_inputs = []
-        cuda_inputs = []
-        host_outputs = []
-        cuda_outputs = []
-        bindings = []
+            host_inputs = []
+            cuda_inputs = []
+            host_outputs = []
+            cuda_outputs = []
+            bindings = []
+            self.host_inputs = host_inputs
+            self.cuda_inputs = cuda_inputs
+            self.host_outputs = host_outputs
+            self.cuda_outputs = cuda_outputs
+            self.bindings = bindings
 
-        for binding in engine:
-            print('bingding:', binding, engine.get_binding_shape(binding))
-            size = trt.volume(engine.get_binding_shape(binding)) * engine.max_batch_size
-            dtype = trt.nptype(engine.get_binding_dtype(binding))
-            # Allocate host and device buffers
-            host_mem = cuda.pagelocked_empty(size, dtype)
-            cuda_mem = cuda.mem_alloc(host_mem.nbytes)
-            # Append the device buffer to device bindings.
-            bindings.append(int(cuda_mem))
-            # Append to the appropriate list.
-            if engine.binding_is_input(binding):
-                self.input_w = engine.get_binding_shape(binding)[-1]
-                self.input_h = engine.get_binding_shape(binding)[-2]
-                host_inputs.append(host_mem)
-                cuda_inputs.append(cuda_mem)
-            else:
-                host_outputs.append(host_mem)
-                cuda_outputs.append(cuda_mem)
+            for binding in engine:
+                print('bingding:', binding, engine.get_binding_shape(binding))
+                size = trt.volume(engine.get_binding_shape(binding)) * engine.max_batch_size
+                dtype = trt.nptype(engine.get_binding_dtype(binding))
+                host_mem = cuda.pagelocked_empty(size, dtype)
+                cuda_mem = cuda.mem_alloc(host_mem.nbytes)
+                bindings.append(int(cuda_mem))
+                if engine.binding_is_input(binding):
+                    self.input_w = engine.get_binding_shape(binding)[-1]
+                    self.input_h = engine.get_binding_shape(binding)[-2]
+                    host_inputs.append(host_mem)
+                    cuda_inputs.append(cuda_mem)
+                else:
+                    host_outputs.append(host_mem)
+                    cuda_outputs.append(cuda_mem)
 
-        # Store
-        self.stream = stream
-        self.context = context
-        self.engine = engine
-        self.host_inputs = host_inputs
-        self.cuda_inputs = cuda_inputs
-        self.host_outputs = host_outputs
-        self.cuda_outputs = cuda_outputs
-        self.bindings = bindings
-        self.batch_size = engine.max_batch_size
+            self.stream = stream
+            self.context = context
+            self.engine = engine
+            self.batch_size = engine.max_batch_size
+        except Exception:
+            self._release_allocations()
+            try:
+                self.ctx.pop()
+            finally:
+                try:
+                    self.ctx.detach()
+                finally:
+                    self.ctx = None
+            raise
+        else:
+            self.ctx.pop()
 
     def infer(self, raw_image_generator):
+        if self.ctx is None or self.context is None:
+            raise RuntimeError("TensorRT detector has been unloaded")
         # Make self the active context, pushing it on top of the context stack.
         self.ctx.push()
-        # Restore
-        stream = self.stream
-        context = self.context
-        engine = self.engine
-        host_inputs = self.host_inputs
-        cuda_inputs = self.cuda_inputs
-        host_outputs = self.host_outputs
-        cuda_outputs = self.cuda_outputs
-        bindings = self.bindings
-        # Do image preprocess
-        batch_image_raw = []
-        batch_origin_h = []
-        batch_origin_w = []
-        batch_input_image = np.empty(shape=[self.batch_size, 3, self.input_h, self.input_w])
-        
-        input_image, image_raw, origin_h, origin_w = self.preprocess_image(raw_image_generator)
-        batch_image_raw.append(image_raw)
-        batch_origin_h.append(origin_h)
-        batch_origin_w.append(origin_w)
-        np.copyto(batch_input_image[0], input_image)
-        
-        batch_input_image = np.ascontiguousarray(batch_input_image)
+        try:
+            # Restore
+            stream = self.stream
+            context = self.context
+            engine = self.engine
+            host_inputs = self.host_inputs
+            cuda_inputs = self.cuda_inputs
+            host_outputs = self.host_outputs
+            cuda_outputs = self.cuda_outputs
+            bindings = self.bindings
+            # Do image preprocess
+            batch_image_raw = []
+            batch_origin_h = []
+            batch_origin_w = []
+            batch_input_image = np.empty(shape=[self.batch_size, 3, self.input_h, self.input_w])
 
-        # Copy input image to host buffer
-        np.copyto(host_inputs[0], batch_input_image.ravel())
-        start = time.time()
-        # Transfer input data  to the GPU.
-        cuda.memcpy_htod_async(cuda_inputs[0], host_inputs[0], stream)
-        # Run inference.
-        context.execute_async(batch_size=self.batch_size, bindings=bindings, stream_handle=stream.handle)
-        # Transfer predictions back from the GPU.
-        cuda.memcpy_dtoh_async(host_outputs[0], cuda_outputs[0], stream)
-        # Synchronize the stream
-        stream.synchronize()
-        end = time.time()
-        # Remove any context from the top of the context stack, deactivating it.
-        self.ctx.pop()
+            input_image, image_raw, origin_h, origin_w = self.preprocess_image(raw_image_generator)
+            batch_image_raw.append(image_raw)
+            batch_origin_h.append(origin_h)
+            batch_origin_w.append(origin_w)
+            np.copyto(batch_input_image[0], input_image)
+
+            batch_input_image = np.ascontiguousarray(batch_input_image)
+
+            # Copy input image to host buffer
+            np.copyto(host_inputs[0], batch_input_image.ravel())
+            start = time.time()
+            # Transfer input data  to the GPU.
+            cuda.memcpy_htod_async(cuda_inputs[0], host_inputs[0], stream)
+            # Run inference.
+            context.execute_async(batch_size=self.batch_size, bindings=bindings, stream_handle=stream.handle)
+            # Transfer predictions back from the GPU.
+            cuda.memcpy_dtoh_async(host_outputs[0], cuda_outputs[0], stream)
+            # Synchronize the stream
+            stream.synchronize()
+            end = time.time()
+        finally:
+            # Always deactivate the explicit context, including inference errors.
+            self.ctx.pop()
         # Here we use the first row of output in that batch_size = 1
         output = host_outputs[0]
         # Do postprocess
@@ -200,9 +226,40 @@ class YoLov5TRT(object):
         #print(int(1/(end - start)))
         return boxes, scores, classid 
 
+    def _release_allocations(self):
+        for allocation in self.cuda_inputs + self.cuda_outputs:
+            try:
+                allocation.free()
+            except Exception:
+                pass
+        self.cuda_inputs = []
+        self.cuda_outputs = []
+        self.host_inputs = []
+        self.host_outputs = []
+        self.bindings = []
+        self.context = None
+        self.engine = None
+        self.stream = None
+
     def destroy(self):
-        # Remove any context from the top of the context stack, deactivating it.
-        self.ctx.pop()
+        """Release TensorRT buffers and detach the detector-owned CUDA context."""
+        context = self.ctx
+        if context is None:
+            return
+        pushed = False
+        try:
+            context.push()
+            pushed = True
+            self._release_allocations()
+        finally:
+            try:
+                if pushed:
+                    context.pop()
+            finally:
+                try:
+                    context.detach()
+                finally:
+                    self.ctx = None
         
     def get_raw_image(self, image_path_batch):
         """

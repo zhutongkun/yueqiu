@@ -1,0 +1,29 @@
+# ROS1 lunar scene-element card recognition settings.
+model_path: "$(find competition)/models/moon/best.pt"
+yolov5_repo: "$(find competition)/third_party/yolov5"
+image_topic: "/astra_camera/rgb/image_raw"
+
+image_size: 640
+confidence_threshold: 0.70
+iou_threshold: 0.45
+vote_window: 7
+minimum_votes: 4
+minimum_consecutive_frames: 2
+timeout_seconds: 15.0
+maximum_result_age: 2.0
+# Orin CPU inference averages about 0.84s per 640x640 frame. Keeping this model
+# on CPU avoids a roughly 90s PyTorch CUDA cold start and dual-GPU-model pressure.
+device: "cpu"
+half: false
+
+enable_roi: false
+roi_x: 0
+roi_y: 0
+roi_width: 0
+roi_height: 0
+minimum_box_area: 400.0
+maximum_box_area: 250000.0
+
+save_debug_image: false
+publish_debug_image: false
+debug_image_directory: "/tmp/moon_detector"

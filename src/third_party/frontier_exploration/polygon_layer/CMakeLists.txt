@@ -30,6 +30,7 @@ include_directories(
 add_library(polygon_layer
   src/polygon_layer.cpp
 )
+add_dependencies(polygon_layer ${catkin_EXPORTED_TARGETS})
 target_link_libraries(polygon_layer
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
